@@ -1,0 +1,167 @@
+/* SynaChat/ui/bubble_style.qss */
+/* Styles for HTML content rendered within the ChatItemDelegate */
+
+/* --- Base Text Styling (within QTextDocument context) --- */
+/* Note: These apply to the HTML rendered by the delegate via QTextDocument. */
+/* It's often better to inject styles directly into the HTML string in the delegate */
+/* for more complex cases, but basic tags can be styled here. */
+
+body { /* Default text properties if not overridden by delegate */
+    /* color: #dcdcdc; */ /* Delegate sets color based on role */
+    /* font-family: "Segoe UI", ...; */ /* Delegate sets font */
+    /* font-size: 10pt; */ /* Delegate sets font size */
+    background-color: transparent; /* Ensure text background is transparent */
+}
+
+/* --- Styles for HTML elements rendered by Markdown --- */
+
+/* Code Blocks (<pre><code>) */
+pre {
+    background-color: #282c34; /* Code block background */
+    border: 1px solid #4a505e;
+    border-radius: 4px;
+    padding: 10px; /* Padding inside the code block */
+    margin: 8px 2px; /* Spacing around code block, less horizontal margin */
+    font-family: "JetBrains Mono", "Consolas", "Courier New", monospace; /* Monospace font */
+    font-size: 9pt; /* Slightly smaller code font */
+    color: #cccccc; /* Default code text color */
+    white-space: pre-wrap; /* Enable wrapping within the <pre> block */
+    word-wrap: break-word;
+    -webkit-hyphens: none; -moz-hyphens: none; hyphens: none; /* Prevent hyphenation */
+}
+/* Ensure inline code within <pre> inherits correctly */
+pre code {
+    font-family: inherit; background-color: transparent; color: inherit;
+    padding: 0; margin: 0; border-radius: 0; border: none; font-size: inherit; }
+/* Style for inline code outside of <pre> blocks */
+code {
+    font-family: "JetBrains Mono", "Consolas", "Courier New", monospace;
+    background-color: #3c3f41; /* Slightly different background for inline */
+    color: #ce9178; /* Use string-like color for inline */
+    padding: 1px 4px; /* Small padding */
+    margin: 0 1px;             /* Small margin */
+    border-radius: 3px; /* Rounded corners */
+    font-size: 9pt;            /* Match code block font size */
+    border: 1px solid #4a505e; /* Subtle border like blocks */
+}
+
+
+/* Basic Markdown elements */
+strong, b { font-weight: bold; color: #b39ddb; } /* Purple */
+em, i { font-style: italic; color: #9cdcfe; } /* Light blue */
+a { color: #61afef; text-decoration: underline; } /* Blue links */
+a:hover { color: #82c0ff; }
+
+/* Headings - Enhanced Colors and Spacing */
+h1 {
+    font-size: 16pt;
+    font-weight: bold;
+    margin-top: 16px; /* More space above */
+    margin-bottom: 8px; /* More space below */
+    color: #61afef; /* Blue */
+    border-bottom: 1px solid #454545;
+    padding-bottom: 4px; /* More padding below border */
+}
+h2 {
+    font-size: 14pt;
+    font-weight: bold;
+    margin-top: 14px; /* More space above */
+    margin-bottom: 7px; /* More space below */
+    color: #98c379; /* Green */
+    border-bottom: 1px solid #454545;
+    padding-bottom: 3px;
+}
+h3 {
+    font-size: 12pt;
+    font-weight: bold;
+    margin-top: 12px; /* More space above */
+    margin-bottom: 6px; /* More space below */
+    color: #e5c07b; /* Yellow */
+}
+h4 {
+    font-size: 11pt;
+    font-weight: bold;
+    margin-top: 10px; /* More space above */
+    margin-bottom: 5px; /* More space below */
+    color: #e06c75; /* Red */
+}
+h5 {
+    font-size: 10pt;
+    font-weight: bold;
+    margin-top: 8px; /* More space above */
+    margin-bottom: 4px; /* More space below */
+    color: #c678dd; /* Magenta */
+}
+h6 {
+    font-size: 10pt;
+    font-style: italic;
+    margin-top: 8px; /* More space above */
+    margin-bottom: 4px; /* More space below */
+    color: #abb2bf; /* Gray */
+}
+
+/* Paragraphs - Ensure bottom margin */
+p {
+    margin: 0 0 8px 0; /* Added more bottom margin */
+    padding: 0;
+}
+
+
+/* Lists - Adjusted Spacing */
+ul, ol {
+    margin-left: 10px; /* Slightly more indent */
+    padding-left: 15px;
+    margin-top: 8px; /* More space above list */
+    margin-bottom: 8px; /* More space below list */
+}
+li {
+    margin-bottom: 6px; /* More space between list items */
+}
+
+/* List Markers (Numbers/Bullets) - Attempting Color */
+/* NOTE: QTextDocument support for ::marker might be limited */
+li::marker {
+    color: #61afef; /* Blue color for markers */
+    font-weight: bold; /* Make markers bold */
+}
+
+/* Blockquotes - Enhanced Styling */
+blockquote {
+    border-left: 4px solid #5c6370; /* Slightly thicker border */
+    margin: 10px 0px 10px 10px; /* More space around */
+    padding: 8px 12px; /* Added vertical padding and more left padding */
+    color: #9aabbf;
+    font-style: italic;
+    background-color: #313335; /* Subtle background color */
+    border-radius: 4px; /* Rounded corners */
+}
+
+/* Horizontal Rule */
+hr {
+    border: 0;
+    height: 1px;
+    background-color: #555555;
+    margin: 20px 0; /* More space around HR */
+}
+
+/* Tables */
+table {
+    border-collapse: collapse;
+    margin: 15px 0;
+    border: 1px solid #555555;
+    background-color: #313335;
+    width: auto; /* Don't force full width */
+}
+th, td {
+    border: 1px solid #555555;
+    padding: 8px 12px; /* More padding */
+    text-align: left;
+}
+th {
+    background-color: #3c3f41;
+    font-weight: bold;
+    color: #dcdcdc;
+}
+td {
+    color: #a9b7c6;
+}
