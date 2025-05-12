@@ -1,4 +1,6 @@
 # core/modification_coordinator.py
+# This is the FULL content for this file, with only the initial plan prompt modified.
+
 import logging
 import ast
 import re
@@ -21,8 +23,9 @@ except ImportError as e:
 
 logger = logging.getLogger(__name__)
 
-# Backend ID Constants (matching ChatManager)
-DEFAULT_CHAT_BACKEND_ID = "gemini_chat_default"
+# Backend ID Constants (matching ChatManager if defined there, or define here)
+# Ensure these are correct for your setup.
+DEFAULT_CHAT_BACKEND_ID = "gemini_chat_default" # Not directly used in this class but good for context
 PLANNER_BACKEND_ID = "gemini_planner"
 GENERATOR_BACKEND_ID = "ollama_generator"
 
@@ -39,12 +42,7 @@ class ModificationCoordinator(QObject):
     modification_sequence_complete = pyqtSignal(str) # reason
     modification_error = pyqtSignal(str) # error_message
     status_update = pyqtSignal(str) # message_for_user_chat
-
-    # --- NEW SIGNAL ---
-    # Emitted after code generation, to request a summary from the Planner AI.
-    # Args: generated_code_str, coder_instructions_str, target_filename_str
     codeGeneratedAndSummaryNeeded = pyqtSignal(str, str, str)
-    # --- END NEW SIGNAL ---
 
     def __init__(self,
                  modification_handler: ModificationHandler,
@@ -118,24 +116,22 @@ class ModificationCoordinator(QObject):
                 self._handle_plan_response(response_text)
             elif self._current_phase == ModPhase.AWAITING_GEMINI_REFINEMENT and backend_id == PLANNER_BACKEND_ID:
                 self._handle_gemini_refinement_response(response_text)
+                return # <<< Your existing fix for Bug 2
             elif self._current_phase == ModPhase.AWAITING_CODE_GENERATION and backend_id == GENERATOR_BACKEND_ID:
-                # --- MODIFICATION: EMIT SUMMARY SIGNAL HERE ---
-                generated_code_str = response_text # Already stripped
+                generated_code_str = response_text
                 coder_instructions_str = self._last_refined_instruction_for_generation or "No specific instructions provided."
                 target_filename_str = self._current_target_filename or "Unknown file"
-
                 logger.info(f"MC: Code generation response received for '{target_filename_str}'. Emitting summary request.")
                 self.codeGeneratedAndSummaryNeeded.emit(generated_code_str, coder_instructions_str, target_filename_str)
-                # --- END MODIFICATION ---
-
-                # The original code generation handling remains
                 self._handle_code_generation_response(generated_code_str)
             else:
                 logger.error(f"MC: Received LLM response from '{backend_id}' in unexpected phase '{self._current_phase}'.")
+                self._is_awaiting_llm = False
                 self._handle_sequence_end("error_unexpected_response_phase",
                                           f"Unexpected LLM response for phase {self._current_phase} from {backend_id}")
         except Exception as e:
             logger.exception(f"MC: Error processing LLM response from '{backend_id}': {e}")
+            self._is_awaiting_llm = False
             self._handle_sequence_end("error_processing_llm_response", f"Error processing {backend_id} response: {e}")
 
     def process_llm_error(self, backend_id: str, error_message: str):
@@ -144,7 +140,6 @@ class ModificationCoordinator(QObject):
             f"MC: Received LLM error from '{backend_id}' during phase '{self._current_phase}': {error_message}")
         self._is_awaiting_llm = False
         QTimer.singleShot(10, lambda: self._handle_sequence_end(f"error_backend_{backend_id}", f"LLM Error ({backend_id}): {error_message}"))
-
 
     def process_user_input(self, user_command: str):
         if not self._is_active:
@@ -191,17 +186,23 @@ class ModificationCoordinator(QObject):
 
     def _request_initial_plan(self):
         logger.debug("MC: Requesting initial plan from planner.")
+        # --- START OF MODIFIED PROMPT ---
         prompt_text = (
-            f"User's request: \"{self._original_query}\"\n"
-            f"Project context (if any): \"{self._original_context}\"\n"
-            f"Focus prefix (if any): \"{self._original_focus_prefix}\"\n\n"
-            "Based ONLY on the user's request and the provided context/focus, identify all relative file paths "
-            "that need to be created or modified to fulfill the request.\n"
-            "Your response MUST be a Python-style list of strings, prefixed with the exact marker \"FILES_TO_MODIFY: \".\n"
-            "Example: FILES_TO_MODIFY: ['src/main.py', 'app/utils.py', 'new_feature/core.py']\n"
-            "If no files need to be changed, respond with: FILES_TO_MODIFY: []\n"
-            "Do NOT include any other text, explanations, or summaries before or after this line."
+            "You are a file planning assistant. Your sole task is to identify files for modification based on the user's request. "
+            "Analyze the following request and context:\n"
+            f"User's main request: \"{self._original_query or 'Not provided.'}\"\n"
+            f"Associated project context: \"{self._original_context or 'N/A'}\"\n"
+            f"Specific focus prefix: \"{self._original_focus_prefix or 'N/A'}\"\n\n"
+            "CRITICAL INSTRUCTION: Your entire response MUST be a single line starting with the exact text 'FILES_TO_MODIFY: ' "
+            "followed by a Python-style list of strings representing the relative file paths to be modified. "
+            "Do not include any other text, explanations, apologies, greetings, or summaries whatsoever, neither before nor after this single required line.\n\n"
+            "EXAMPLE OF VALID RESPONSE:\n"
+            "FILES_TO_MODIFY: ['src/main.py', 'app/utils.py', 'new_module/core.py']\n\n"
+            "IF NO FILES NEED MODIFICATION, YOUR RESPONSE MUST BE:\n"
+            "FILES_TO_MODIFY: []\n\n"
+            "Provide your response now:"
         )
+        # --- END OF MODIFIED PROMPT ---
         history_for_llm = [ChatMessage(role=USER_ROLE, parts=[prompt_text])]
         self.request_llm_call.emit(PLANNER_BACKEND_ID, history_for_llm)
         self._current_phase = ModPhase.AWAITING_PLAN
@@ -284,7 +285,6 @@ class ModificationCoordinator(QObject):
             # Sequence end will be triggered by _handle_handler_parsing_error
             pass
 
-
     def _proceed_to_next_file_step(self):
         if not (0 <= self._current_file_index < len(self._planned_files_list)):
             logger.error("MC: _proceed_to_next_file_step called with invalid index or empty plan.")
@@ -300,31 +300,31 @@ class ModificationCoordinator(QObject):
         )
         self._request_prompt_refinement(standard_instruction, self._current_target_filename)
 
-
     def _parse_files_to_modify_list(self, response_text: str) -> Tuple[Optional[List[str]], Optional[str]]:
         marker = "FILES_TO_MODIFY:"
+        logger.debug(f"Attempting to parse plan. Raw response: '{response_text[:500]}...'") # From combined.txt
         marker_pos = response_text.find(marker)
         if marker_pos == -1:
-            return None, f"Marker '{marker}' not found."
+            return None, f"Marker '{marker}' not found." # From combined.txt
         list_str_start = marker_pos + len(marker)
         potential_list_str = response_text[list_str_start:].strip()
-        match = re.match(r"(\[.*?\])", potential_list_str)
+        match = re.match(r"(\[.*?\])", potential_list_str) # From combined.txt
         if match:
             list_str_for_eval = match.group(1)
         else:
-            first_line_after_marker = potential_list_str.split('\n', 1)[0].strip()
+            first_line_after_marker = potential_list_str.split('\n', 1)[0].strip() # From combined.txt
             if not (first_line_after_marker.startswith('[') and first_line_after_marker.endswith(']')):
-                return None, "List does not appear to be correctly formatted with brackets on the first line."
+                return None, "List does not appear to be correctly formatted with brackets on the first line." # From combined.txt
             list_str_for_eval = first_line_after_marker
         try:
-            parsed_list = ast.literal_eval(list_str_for_eval)
+            parsed_list = ast.literal_eval(list_str_for_eval) # From combined.txt
             if not isinstance(parsed_list, list):
-                return None, "Parsed data is not a list."
-            cleaned_list = [str(f).strip().replace("\\", "/") for f in parsed_list if isinstance(f, (str, int, float))]
-            cleaned_list = [f for f in cleaned_list if f]
+                return None, "Parsed data is not a list." # From combined.txt
+            cleaned_list = [str(f).strip().replace("\\", "/") for f in parsed_list if isinstance(f, (str, int, float))] # From combined.txt
+            cleaned_list = [f for f in cleaned_list if f] # From combined.txt
             return cleaned_list, None
         except (ValueError, SyntaxError, TypeError) as e:
-            return None, f"Error parsing list string '{list_str_for_eval}': {e}"
+            return None, f"Error parsing list string '{list_str_for_eval}': {e}" # From combined.txt
 
     @pyqtSlot(str, str)
     def _handle_handler_code_ready(self, filename: str, content: str):
@@ -332,13 +332,10 @@ class ModificationCoordinator(QObject):
         if self._is_active:
             if filename == self._current_target_filename:
                 self.file_ready_for_display.emit(filename, content)
-                # The summary request is now emitted *before* this in process_llm_response
-                # So the flow is: Code -> Summary Request -> Display Code -> User Confirmation
                 self._current_phase = ModPhase.AWAITING_USER_CONFIRMATION
             else:
                 logger.warning(f"MC: Handler emitted code for '{filename}', but expected '{self._current_target_filename}'. Forwarding anyway.")
                 self.file_ready_for_display.emit(filename, content)
-
 
     @pyqtSlot(str)
     def _handle_handler_status_message(self, message: str):
@@ -355,7 +352,7 @@ class ModificationCoordinator(QObject):
         logger.info(f"MC: Ending sequence (Reason: {reason}).")
         if error_details:
             logger.error(f"  Error details for sequence end: {error_details}")
-            self.modification_error.emit(error_details)
+            # self.modification_error.emit(error_details) # Already emitted from other places if it's a parsing error
         self.modification_sequence_complete.emit(reason)
         self._reset_state()
 

@@ -337,13 +337,14 @@ class LeftControlPanel(QWidget):
         if self._active_project_id_in_lcp == active_project_id and self.project_tree_view.currentIndex().isValid() and self.project_tree_model.itemFromIndex(
                 self.project_tree_view.currentIndex()).data(self.PROJECT_ID_ROLE) == active_project_id:
             self._update_dynamic_group_titles();
+            # --- REMOVED self._update_rag_button_state() call from here ---
             return
         self._active_project_id_in_lcp = active_project_id;
         self._is_programmatic_selection = True
         self._select_project_item_in_tree(active_project_id);
         self._update_dynamic_group_titles()
         self._is_programmatic_selection = False;
-        self._update_rag_button_state()
+        # --- REMOVED self._update_rag_button_state() call from here ---
 
     def _select_project_item_in_tree(self, project_id_to_select: str):
         target_id = project_id_to_select if project_id_to_select and project_id_to_select.strip() else GLOBAL_COLLECTION_ID
@@ -379,35 +380,32 @@ class LeftControlPanel(QWidget):
 
     def set_enabled_state(self, enabled: bool, is_busy: bool):
         effective_enabled = enabled and not is_busy
-        self.create_project_context_button.setEnabled(enabled)
+        self.create_project_context_button.setEnabled(enabled) # New project can always be created
         self.new_chat_button.setEnabled(effective_enabled)
         self.manage_chats_button.setEnabled(effective_enabled)
         self.configure_ai_personality_button.setEnabled(effective_enabled)
-        self.model_selector.setEnabled(enabled)
+        self.model_selector.setEnabled(enabled) # Model can be changed even if busy (config change)
         self.model_label.setStyleSheet(f"QLabel {{ color: {'#CCCCCC' if enabled else '#777777'}; }}")
-        self.project_tree_view.setEnabled(enabled)
+        self.project_tree_view.setEnabled(enabled) # Project selection can happen even if busy
+
+        # Enable/disable based on effective_enabled (i.e., not busy)
         self.add_files_button.setEnabled(effective_enabled)
         self.add_folder_button.setEnabled(effective_enabled)
         self.manage_global_knowledge_button.setEnabled(effective_enabled)
-        self.view_code_blocks_button.setEnabled(True)
+
+        # View buttons can often be used even if busy, depending on what they view
+        self.view_code_blocks_button.setEnabled(True) # Assume code viewer is independent of busy state
+
         self.temperature_label.setEnabled(enabled)
         self.temperature_slider.setEnabled(effective_enabled)
         self.temperature_spinbox.setEnabled(effective_enabled)
         self.temperature_label.setStyleSheet(f"QLabel {{ color: {'#CCCCCC' if enabled else '#777777'}; }}")
-        self._update_rag_button_state()
 
-    def _update_rag_button_state(self):
-        rag_context_ready = False
-        try:
-            main_window = self.parent()  # type: ignore
-            if main_window and hasattr(main_window, 'chat_manager'):
-                chat_manager = main_window.chat_manager  # type: ignore
-                if chat_manager and hasattr(chat_manager, 'is_rag_context_initialized'):
-                    rag_context_ready = chat_manager.is_rag_context_initialized(
-                        self._active_project_id_in_lcp)  # type: ignore
-        except Exception as e:
-            logger.error(f"Error checking RAG context readiness in LeftPanel: {e}")
-        self.view_project_rag_button.setEnabled(rag_context_ready)
+        # REMOVED self._update_rag_button_state()
+        # MainWindow will now be solely responsible for enabling/disabling view_project_rag_button
+        # based on ChatManager's RAG context readiness.
+        # LeftPanel's view_project_rag_button is just a dumb button now whose enabled state
+        # is controlled externally by MainWindow.
 
     def update_personality_tooltip(self, active: bool):
         tooltip_base = "Customize the AI's personality and system prompt (Ctrl+P)"

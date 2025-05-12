@@ -1,15 +1,13 @@
 # core/modification_handler.py
 import logging
 import re
-import ast # For literal_eval (though likely not needed here anymore for plan parsing)
+import ast  # For literal_eval (though likely not needed here anymore for plan parsing)
 from typing import List, Tuple, Optional, Dict, Any
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
 logger = logging.getLogger(__name__)
 
-# NOTE: The MODIFICATION_PROMPT_TEMPLATE (for initial planning) is now GONE from here.
-# ModificationCoordinator handles the initial planning prompt to Gemini.
 
 class ModificationHandler(QObject):
     """
@@ -17,25 +15,22 @@ class ModificationHandler(QObject):
     for the multi-file code modification workflow.
     Works in conjunction with ModificationCoordinator.
     """
-    # Signals to ModificationCoordinator
-    code_file_ready = pyqtSignal(str, str) # Emits (filename, content)
-    status_message_ready = pyqtSignal(str) # Emits informational message
-    modification_parsing_error = pyqtSignal(str) # Emits on LLM code generation response parsing failure
+    code_file_ready = pyqtSignal(str, str)  # Emits (filename, content)
+    status_message_ready = pyqtSignal(str)  # Emits informational message
+    modification_parsing_error = pyqtSignal(str)  # Emits on LLM code generation response parsing failure
 
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
         self._last_emitted_filename: Optional[str] = None
-        self._is_active: bool = False # Is the handler part of an active sequence?
+        self._is_active: bool = False
         logger.info("ModificationHandler initialized (for CodeLlama interaction).")
 
     def activate_sequence(self):
-        """Activates the handler for a new modification sequence."""
         logger.info("ModificationHandler activated for a sequence.")
-        self.cancel_modification() # Ensure clean state
+        self.cancel_modification()
         self._is_active = True
 
     def cancel_modification(self):
-        """Resets the handler's state, typically called by ModificationCoordinator."""
         if self._is_active:
             logger.info("ModificationHandler resetting/cancelling state.")
         self._last_emitted_filename = None
@@ -45,22 +40,17 @@ class ModificationHandler(QObject):
         return self._is_active
 
     def prepare_standard_codellama_instruction(
-        self,
-        target_filename: str,
-        original_user_query: str,
-        full_plan: List[str] # List of all files in the modification plan
+            self,
+            target_filename: str,
+            original_user_query: str,
+            full_plan: List[str]
     ) -> str:
-        """
-        Prepares a standard instruction for CodeLlama to generate/update a single file.
-        """
         if not self._is_active:
             logger.warning("MH: prepare_standard_instruction called when not active.")
             return "[ERROR: Handler not active]"
-
         logger.debug(f"MH: Preparing standard CodeLlama instruction for: {target_filename}")
         planned_files_str = ", ".join(f"'{f}'" for f in full_plan)
         if not planned_files_str: planned_files_str = "[No other files in plan or plan not specified]"
-
         instruction = (
             f"You are an expert Python coding assistant. Your current task is to generate the complete and correct code for the file: `{target_filename}`.\n"
             f"This is part of a larger modification based on the user's request: \"{original_user_query}\"\n"
@@ -80,18 +70,14 @@ class ModificationHandler(QObject):
         return instruction
 
     def prepare_codellama_refinement_instruction(
-        self,
-        target_filename: str,
-        user_feedback: str,
-        previous_llm_instruction: str # The instruction that led to the code being refined
+            self,
+            target_filename: str,
+            user_feedback: str,
+            previous_llm_instruction: str
     ) -> str:
-        """
-        Prepares an instruction for CodeLlama to refine an existing file based on feedback.
-        """
         if not self._is_active:
             logger.warning("MH: prepare_refinement_instruction called when not active.")
             return "[ERROR: Handler not active]"
-
         logger.debug(f"MH: Preparing CodeLlama refinement instruction for: {target_filename}")
         instruction = (
             f"You are an expert Python coding assistant. We are refining the file: `{target_filename}`.\n"
@@ -111,97 +97,91 @@ class ModificationHandler(QObject):
         return instruction
 
     def process_llm_code_generation_response(self, response_text: str, expected_filename: str) -> bool:
-        """
-        Processes the LLM's response which should contain generated code for a file.
-        Emits code_file_ready on success, or modification_parsing_error on failure.
-        Returns True if parsing and emission were successful, False otherwise.
-        """
         if not self._is_active:
-            logger.warning(f"MH: process_llm_code_generation_response called for '{expected_filename}' when not active.")
-            # self.modification_parsing_error.emit("[System Error: Handler was not active during code processing.]") # Optional
+            logger.warning(
+                f"MH: process_llm_code_generation_response called for '{expected_filename}' when not active.")
             return False
 
-        logger.info(f"MH: Processing CodeLlama response, expecting file: '{expected_filename}'")
-        response_text_stripped = response_text.strip()
+        logger.info(f"MH: Processing Generator AI response, expecting file: '{expected_filename}'")
+        response_text_stripped = response_text  # Keep original structure for parsing
 
-        parsed_file_tuple = self._parse_first_code_block(response_text_stripped)
+        # Call the modified parser
+        parsed_file_tuple = self._parse_first_code_block_lenient(response_text_stripped, expected_filename)
 
         if not parsed_file_tuple:
-            err_msg = f"[System: Generator AI response format error. Expected a single Markdown code block labeled with filename '{expected_filename}'. Response did not contain a recognizable code block. Response preview:\n{response_text_stripped[:300]}...]"
+            err_msg = f"[System: Generator AI response format error. Expected a single Markdown code block labeled with filename '{expected_filename}'. Response did not contain a recognizable code block or the label was incorrect. Response preview:\n{response_text_stripped[:300]}...]"
             logger.error(err_msg)
             self.modification_parsing_error.emit(err_msg)
             return False
 
         parsed_filename, content = parsed_file_tuple
-
-        # Validate filename (optional: be strict or lenient)
-        if parsed_filename != expected_filename:
-            warn_msg = f"[System Warning: Generator AI provided code for file '{parsed_filename}', but expected '{expected_filename}'. Using AI's provided filename for this step.]"
-            logger.warning(warn_msg)
-            self.status_message_ready.emit(warn_msg)
-            # Decide if this is an error or if we proceed with parsed_filename
-            # For now, let's proceed but the ModificationCoordinator might also check this.
-            # self._last_emitted_filename = parsed_filename # Update to what was actually parsed
-        # else:
-        # self._last_emitted_filename = expected_filename
-
-        self._last_emitted_filename = parsed_filename # Always store the filename that was actually parsed from the block
+        self._last_emitted_filename = parsed_filename
 
         self.code_file_ready.emit(parsed_filename, content)
-        self.status_message_ready.emit(f"[System: Code for '{parsed_filename}' received from Generator AI. Review and provide feedback or type 'next'.]")
+        self.status_message_ready.emit(
+            f"[System: Code for '{parsed_filename}' received from Generator AI. Review and provide feedback or type 'next'.]")
         logger.info(f"MH: Successfully parsed and emitted code for '{parsed_filename}'.")
         return True
 
-
-    def _parse_first_code_block(self, text_to_parse: str) -> Optional[Tuple[str, str]]:
+    def _parse_first_code_block_lenient(self, text_to_parse: str, expected_filename: str) -> Optional[Tuple[str, str]]:
         """
-        Parses text for the *first* fenced code block labeled with a filename.
-        This is a critical parser for the expected LLM output format.
+        Leniently parses text for the first Markdown fenced code block that is
+        explicitly labeled with the expected filename or a generic Python label.
+        It will skip any leading text.
         """
-        # Regex: ``` optionally followed by language, then whitespace, then the path, then newline, content, newline, ```
-        # Path can contain letters, numbers, /, ., _, -
-        # Content is captured non-greedily until the final ```
-        # Made language part optional and more flexible: (?:[a-zA-Z0-9_\-\.]*)?
-        # Made whitespace after language optional: \s*
-        # Filename capture group made more robust: ([\w\./\\_-]+)
-        pattern = r"```(?:[a-zA-Z0-9_\-\.]*)?\s*([\w\./\\_-]+)\s*\n(.*?)\n```"
-        # Example match: ```python src/my_app/utils.py\n# code\n```
-        # Example match: ``` src/my_app/utils.py\n# code\n```
-        # Example match: ```utils.py\n# code\n```
+        # Try to find the specifically labeled block first
+        # Regex: ``` optionally language, then optional whitespace, then the EXACT expected_filename, then newline, content, newline, ```
+        # Escape the expected_filename for regex since it can contain dots, slashes etc.
+        escaped_expected_filename = re.escape(expected_filename)
+        specific_pattern = rf"```(?:[a-zA-Z0-9_\-\.]*)?\s*{escaped_expected_filename}\s*\n(.*?)\n```"
 
-        try:
-            match = re.search(pattern, text_to_parse, re.DOTALL | re.IGNORECASE)
+        logger.debug(f"MH_Lenient: Trying specific pattern: {specific_pattern}")
+        match = re.search(specific_pattern, text_to_parse, re.DOTALL | re.IGNORECASE)
+
+        if match:
+            filepath = expected_filename  # We matched it directly
+            content = match.group(1)
+            logger.debug(f"MH_Lenient: Matched specific labeled block for '{filepath}'.")
+        else:
+            # Fallback: Look for any Python code block and hope it's the right one
+            # This is less precise but handles cases where the LLM might omit or alter the label slightly
+            logger.debug(f"MH_Lenient: Specific pattern failed. Trying generic python block.")
+            generic_pattern = r"```python\s*\n(.*?)\n```"  # Simpler, just looks for ```python
+            match = re.search(generic_pattern, text_to_parse, re.DOTALL | re.IGNORECASE)
             if match:
-                filepath = match.group(1).strip().replace("\\", "/") # Normalize path separators
-                content = match.group(2) # Get content, DO NOT STRIP YET - allow leading/trailing newlines within block
-
-                # Remove a single leading newline IF PRESENT (often added by LLMs)
-                if content.startswith('\n'):
-                    content = content[1:]
-                # Remove a single trailing newline IF PRESENT
-                if content.endswith('\n'):
-                    content = content[:-1]
-
-                if filepath: # Content can be empty (e.g. creating an empty __init__.py)
-                    logger.debug(f"MH: Parsed code block. File: '{filepath}', Content Length: {len(content)}")
-                    # Check for extra text after the block (strict adherence)
-                    end_of_block = match.end()
-                    remaining_text_after_block = text_to_parse[end_of_block:].strip()
-                    if remaining_text_after_block:
-                         # This is a format violation by the LLM
-                         extra_text_warning = f"[System Warning: Generator AI included extra text after the required code block, which was ignored. This may indicate an issue with the AI's response adherence. Extra text: '{remaining_text_after_block[:100]}...']"
-                         logger.warning(extra_text_warning)
-                         self.status_message_ready.emit(extra_text_warning) # Inform user via MC
-                    return filepath, content
-                else:
-                    logger.warning(f"MH: Found code block, but filename ('{filepath}') was empty.")
+                filepath = expected_filename  # Assume it's for the expected file if a generic python block is found
+                content = match.group(1)
+                logger.warning(
+                    f"MH_Lenient: Matched generic 'python' block for '{expected_filename}'. Assuming content is correct.")
             else:
-                logger.warning("MH: No valid labeled code block found in text section using regex.")
-        except Exception as e:
-            logger.error(f"MH: Error parsing first code block with regex: {e}", exc_info=True)
-        return None
+                # Fallback 2: Look for any code block at all if even generic python fails
+                logger.debug(f"MH_Lenient: Generic python block failed. Trying any code block.")
+                any_code_block_pattern = r"```(?:[a-zA-Z0-9_\-\.+]+)?\s*\n(.*?)\n```"
+                match = re.search(any_code_block_pattern, text_to_parse, re.DOTALL | re.IGNORECASE)
+                if match:
+                    filepath = expected_filename  # Still assume it's for the expected file
+                    content = match.group(1)
+                    logger.warning(
+                        f"MH_Lenient: Matched ANY code block for '{expected_filename}'. Assuming content is correct.")
+                else:
+                    logger.warning("MH_Lenient: No code block found even with lenient parsing.")
+                    return None
 
+        # Clean content (remove single leading/trailing newline if present)
+        if content.startswith('\n'):
+            content = content[1:]
+        if content.endswith('\n'):
+            content = content[:-1]
+
+        # Check for extra text after the block (informational)
+        end_of_block = match.end()
+        remaining_text_after_block = text_to_parse[end_of_block:].strip()
+        if remaining_text_after_block:
+            extra_text_warning = f"[System Warning: Generator AI included extra text after the required code block, which was ignored. Extra text: '{remaining_text_after_block[:100]}...']"
+            logger.warning(extra_text_warning)
+            self.status_message_ready.emit(extra_text_warning)
+
+        return filepath, content
 
     def get_last_emitted_filename(self) -> Optional[str]:
-        """Returns the filename that was last emitted via code_file_ready."""
         return self._last_emitted_filename

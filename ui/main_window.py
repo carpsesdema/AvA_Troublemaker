@@ -15,14 +15,15 @@ from PyQt6.QtCore import Qt, pyqtSlot, QTimer, QSize, QEvent, QPoint, pyqtSignal
 from PyQt6.QtGui import QFont, QIcon, QMovie, QCloseEvent, QShortcut, QKeyEvent, QKeySequence, QCursor
 
 try:
-    from core.chat_manager import ChatManager, DEFAULT_CHAT_BACKEND_ID # <-- IMPORT ADDED HERE
+    from core.chat_manager import ChatManager, DEFAULT_CHAT_BACKEND_ID
     from core.models import ChatMessage, SYSTEM_ROLE, ERROR_ROLE, MODEL_ROLE, USER_ROLE
+    from core.message_enums import MessageLoadingState # Added import
     from .left_panel import LeftControlPanel
     from .dialog_service import DialogService
     from .chat_tab_manager import ChatTabManager
-    from utils import constants # Assuming constants.py is in a 'utils' directory
+    from utils import constants
 except ImportError as e:
-    logging.basicConfig(level=logging.DEBUG) # Ensure logging is configured for early errors
+    logging.basicConfig(level=logging.DEBUG)
     logging.critical(f"CRITICAL IMPORT ERROR in main_window.py: {e}", exc_info=True)
     try:
         _dummy_app = QApplication(sys.argv) if QApplication.instance() is None else QApplication.instance()
@@ -45,7 +46,7 @@ class MainWindow(QWidget):
 
         self.chat_manager = chat_manager
         self.app_base_path = app_base_path
-        self._last_added_message_was_streaming = False
+        # self._last_added_message_was_streaming = False # REPLACED by ID-based logic
 
         self.left_panel: Optional[LeftControlPanel] = None
         self.status_label: Optional[QLabel] = None
@@ -230,86 +231,103 @@ class MainWindow(QWidget):
             display_area.load_history_into_model(history)
             self._rescan_history_for_code_blocks(history)
         self.update_window_title()
-        self._last_added_message_was_streaming = False
         self._update_rag_button_state()
 
     @pyqtSlot(object)
     def _handle_new_message(self, message: ChatMessage):
+        # ---- NEW DISTINCT LOG ----
+        logger.error(f"!!!!!!!! MW _handle_new_message ENTRY: Role={message.role}, ID={message.id}, Text='{message.text[:100]}...' !!!!!")
+        # ---- END NEW DISTINCT LOG ----
+
         pcm = self.chat_manager.get_project_context_manager()
         active_project_id = pcm.get_active_project_id() if pcm else constants.GLOBAL_COLLECTION_ID
-        logger.info(f"MW Slot _handle_new_message for project '{active_project_id}' (Role: {message.role}, Streaming?: {self._last_added_message_was_streaming})")
+        logger.info(f"MW Slot _handle_new_message for project '{active_project_id}' (ID: {message.id}, Role: {message.role})")
+
         if not (self.chat_tab_manager and active_project_id): return
         target_tab = self.chat_tab_manager.get_chat_tab_instance(active_project_id)
-        if not target_tab: logger.error(f"No tab for active project '{active_project_id}'."); return
+        if not target_tab:
+            logger.error(f"No tab instance for active project '{active_project_id}' when handling new message.")
+            return
         target_display_area = target_tab.get_chat_display_area()
-        if not (target_display_area and (model := target_display_area.get_model())):
-            logger.critical(f"DisplayArea or model missing for project '{active_project_id}'."); return
+        if not target_display_area:
+            logger.critical(f"DisplayArea missing for project '{active_project_id}'.")
+            return
+        model = target_display_area.get_model()
+        if not model:
+            logger.critical(f"ChatListModel missing for project '{active_project_id}'.")
+            return
 
-        is_internal = message.metadata and message.metadata.get("is_internal", False)
-        is_model_response = message.role == MODEL_ROLE and not is_internal
-        is_upload_summary = message.metadata and message.metadata.get("upload_summary") is not None
+        is_internal_system_message = message.metadata and message.metadata.get("is_internal", False)
+        if is_internal_system_message:
+            logger.debug(f"Skipping internal system message in _handle_new_message (ID: {message.id})")
+            return
 
-        try:
-            if is_model_response and self._last_added_message_was_streaming:
-                last_row_index = model.rowCount() - 1
-                if last_row_index >= 0:
-                    if message.metadata and "is_streaming" in message.metadata: del message.metadata["is_streaming"]
-                    target_display_area.update_message_in_model(last_row_index, message)
-                    self._last_added_message_was_streaming = False
-                else:
-                    if not is_internal: target_display_area.add_message_to_model(message)
-                    self._last_added_message_was_streaming = False
+        if message.role == MODEL_ROLE:
+            existing_row = model.find_message_row_by_id(message.id)
+            if existing_row is not None:
+                logger.debug(f"Found existing AI message (ID: {message.id}) at row {existing_row}. Updating.")
+                if message.metadata and "is_streaming" in message.metadata:
+                    del message.metadata["is_streaming"]
+                if message.loading_state == MessageLoadingState.LOADING:
+                    message.loading_state = MessageLoadingState.COMPLETED
+                target_display_area.update_message_in_model(existing_row, message)
             else:
-                if not is_internal: target_display_area.add_message_to_model(message)
-                if message.role != MODEL_ROLE: self._last_added_message_was_streaming = False
-            if message.text and (is_model_response or message.role in [SYSTEM_ROLE, ERROR_ROLE]):
-                self._scan_message_for_code_blocks(message)
-            if is_upload_summary: self._update_rag_button_state()
-        except Exception as e:
-            logger.exception(f"ERROR processing message role {message.role} for project '{active_project_id}'")
-            self.update_status(f"Error displaying message: {e}", "#e06c75", True, 5000)
+                logger.debug(f"Adding new AI message (ID: {message.id}) to model.")
+                target_display_area.add_message_to_model(message)
+        else:
+            logger.debug(f"Adding new non-AI message (ID: {message.id}, Role: {message.role}) to model.")
+            target_display_area.add_message_to_model(message)
 
-    @pyqtSlot(str)
-    def _handle_stream_started(self, role: str):
-        pcm = self.chat_manager.get_project_context_manager()
-        active_project_id = pcm.get_active_project_id() if pcm else constants.GLOBAL_COLLECTION_ID
-        logger.info(f"MW SLOT _handle_stream_started for project '{active_project_id}': Role '{role}'.")
-        if not (self.chat_tab_manager and active_project_id): return
-        target_tab = self.chat_tab_manager.get_chat_tab_instance(active_project_id)
-        if not target_tab: logger.error(f"No tab for project '{active_project_id}'."); return
-        if target_display_area := target_tab.get_chat_display_area():
-            try:
-                initial_message = ChatMessage(role=role, parts=[""], metadata={"is_streaming": True})
-                target_display_area.start_streaming_in_model(initial_message)
-                self._last_added_message_was_streaming = True
-            except Exception as e:
-                logger.exception(f"ERROR starting stream role {role} for project '{active_project_id}'")
-                self.update_status(f"Error starting stream: {e}", "#e06c75", True, 5000)
-                self._last_added_message_was_streaming = False
+        if message.text:
+            self._scan_message_for_code_blocks(message)
+
+        is_upload_summary = message.metadata and message.metadata.get("upload_summary") is not None
+        if is_upload_summary:
+            self._update_rag_button_state()
+
+    @pyqtSlot(str) # request_id
+    def _handle_stream_started(self, request_id: str):
+        active_project_id = self.chat_manager.get_current_project_id()
+        logger.info(f"MW SLOT _handle_stream_started for project '{active_project_id}', request_id '{request_id}'.")
+        pass
 
     @pyqtSlot(str)
     def _handle_stream_chunk(self, chunk: str):
-        pcm = self.chat_manager.get_project_context_manager()
-        active_project_id = pcm.get_active_project_id() if pcm else constants.GLOBAL_COLLECTION_ID
-        if not self._last_added_message_was_streaming: return
+        active_project_id = self.chat_manager.get_current_project_id()
         if not (self.chat_tab_manager and active_project_id): return
+
         target_tab = self.chat_tab_manager.get_chat_tab_instance(active_project_id)
-        if target_tab and (display_area := target_tab.get_chat_display_area()):
-            display_area.append_stream_chunk_to_model(chunk)
+        if target_tab:
+            display_area = target_tab.get_chat_display_area()
+            if display_area:
+                display_area.append_stream_chunk_to_model(chunk)
+            else:
+                logger.error(f"No display area in active tab for project '{active_project_id}' to append chunk.")
+        else:
+            logger.error(f"No active tab found for project '{active_project_id}' to append chunk.")
+
 
     @pyqtSlot()
     def _handle_stream_finished(self):
-        pcm = self.chat_manager.get_project_context_manager()
-        active_project_id = pcm.get_active_project_id() if pcm else constants.GLOBAL_COLLECTION_ID
+        active_project_id = self.chat_manager.get_current_project_id()
         logger.info(f"MW SLOT _handle_stream_finished for project '{active_project_id}'.")
-        if not self._last_added_message_was_streaming: return
+
         if not (self.chat_tab_manager and active_project_id): return
         target_tab = self.chat_tab_manager.get_chat_tab_instance(active_project_id)
-        if target_tab and (display_area := target_tab.get_chat_display_area()):
-            try: display_area.finalize_stream_in_model()
-            except Exception as e:
-                logger.exception(f"ERROR finalizing stream for project '{active_project_id}'")
-                self.update_status(f"Error finalizing stream display: {e}", "#e06c75", True, 5000)
+        if target_tab:
+            display_area = target_tab.get_chat_display_area()
+            if display_area:
+                try:
+                    display_area.finalize_stream_in_model()
+                except Exception as e:
+                    logger.exception(f"ERROR finalizing stream for project '{active_project_id}'")
+                    self.update_status(f"Error finalizing stream display: {e}", "#e06c75", True, 5000)
+            else:
+                logger.error(f"No display area in active tab for project '{active_project_id}' to finalize stream.")
+        else:
+            logger.error(f"No active tab found for project '{active_project_id}' to finalize stream.")
+
+        self._update_rag_button_state()
 
     @pyqtSlot(bool)
     def _handle_busy_state(self, is_busy: bool):
@@ -317,7 +335,6 @@ class MainWindow(QWidget):
         api_ready = self.chat_manager.is_api_ready()
         if self.left_panel: self.left_panel.set_enabled_state(enabled=api_ready, is_busy=is_busy)
         if self.chat_tab_manager: self.chat_tab_manager.update_busy_state_for_active_tab(is_busy)
-        if not is_busy: self._last_added_message_was_streaming = False
 
     @pyqtSlot(str, str, bool, int)
     def update_status(self, message: str, color: str = "#abb2bf", is_temporary: bool = False, duration_ms: int = 0):
@@ -376,7 +393,6 @@ class MainWindow(QWidget):
     def _handle_error(self, error_message: str, is_critical: bool):
         logger.error(f"MW Slot: Handling error: '{error_message}', Critical: {is_critical}")
         self.update_status(f"Error: {error_message}", "#e06c75", True, 8000)
-        self._last_added_message_was_streaming = False
         critical_keywords = ["api", "config", "connection", "fatal", "critical", "service", "failed to load", "permission", "quota", "backend", "upload", "saving"]
         if is_critical or any(kw in error_message.lower() for kw in critical_keywords):
             QMessageBox.warning(self, "Application Error" if is_critical else "Warning", error_message)
@@ -408,7 +424,6 @@ class MainWindow(QWidget):
 
     @pyqtSlot(str, int, int, int)
     def _handle_token_usage_update(self, backend_id: str, prompt_tokens: int, completion_tokens: int, model_max_context: int):
-        # --- MODIFIED: Use imported constant ---
         if backend_id != DEFAULT_CHAT_BACKEND_ID:
             return
 
@@ -540,8 +555,11 @@ class MainWindow(QWidget):
 
     def _trigger_save_session(self):
         current_session_file = None
-        if self.chat_manager and hasattr(self.chat_manager, '_session_flow_manager') and self.chat_manager._session_flow_manager:
-            current_session_file = self.chat_manager._session_flow_manager.get_current_session_filepath()
+        if self.chat_manager:
+            sfm = self.chat_manager.get_session_flow_manager()
+            if sfm:
+                current_session_file = sfm.get_current_session_filepath()
+
         if current_session_file:
             self.chat_manager.save_current_chat_session(current_session_file)
         else:
@@ -615,7 +633,7 @@ class MainWindow(QWidget):
              rag_viewer_instance = self.dialog_service.show_rag_viewer()
              if rag_viewer_instance and hasattr(rag_viewer_instance, 'focusRequested'):
                  try: rag_viewer_instance.focusRequested.disconnect(self.chat_manager.set_chat_focus)
-                 except TypeError: pass # Raised if not connected
+                 except TypeError: pass
                  rag_viewer_instance.focusRequested.connect(self.chat_manager.set_chat_focus)
         elif self.chat_manager and not self.chat_manager.is_rag_available():
              QMessageBox.information(self, "RAG Not Ready", "RAG system not available/initialized. Upload documents to a context first.")

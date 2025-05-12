@@ -1,5 +1,6 @@
 # services/code_summary_service.py
 import logging
+import uuid # <--- ADDED IMPORT
 from typing import Optional, Dict, List
 
 # Assuming ChatMessage and BackendCoordinator are accessible for type hinting
@@ -75,9 +76,6 @@ class CodeSummaryService:
         if not backend_coordinator.is_backend_configured(PLANNER_BACKEND_ID):
             err_msg = f"Planner AI ('{PLANNER_BACKEND_ID}') is not configured. Cannot generate code summary for '{target_filename}'."
             logger.error(err_msg)
-            # Optionally, this service could emit a signal or ChatManager could check this
-            # before calling, but for now, we just log and return False.
-            # If ChatManager calls this, it should handle informing the user.
             return False
 
         try:
@@ -86,7 +84,7 @@ class CodeSummaryService:
                 coder_instructions=coder_instructions,
                 generated_code=generated_code
             )
-        except KeyError as e_fmt: # More specific exception for formatting
+        except KeyError as e_fmt:
             logger.error(f"Error formatting summary prompt for '{target_filename}': Missing key {e_fmt}", exc_info=True)
             return False
         except Exception as e_fmt_general:
@@ -94,23 +92,31 @@ class CodeSummaryService:
             return False
 
         history_for_summary: List[ChatMessage] = [ChatMessage(role=USER_ROLE, parts=[summary_prompt])]
-        planner_options: Dict[str, float] = {"temperature": 0.6}  # Example, could be configurable
+        planner_options: Dict[str, float] = {"temperature": 0.6}
 
-        # Metadata to identify this request's purpose when the response comes back to ChatManager
+        # --- MODIFICATION: Generate and include request_id ---
+        summary_request_id = f"summary_{target_filename.replace('/', '_')}_{str(uuid.uuid4())[:8]}"
+        # --- END MODIFICATION ---
+
         summary_request_metadata: Dict[str, str] = {
             "purpose": "code_summary",
-            "original_target_filename": target_filename
+            "original_target_filename": target_filename,
+            # Optionally include the summary_request_id in metadata if needed for tracking by ChatManager
+            # "summary_request_id": summary_request_id
         }
 
-        logger.debug(f"Dispatching summary request for '{target_filename}' to BackendCoordinator.")
+        logger.debug(f"Dispatching summary request for '{target_filename}' (request_id: {summary_request_id}) to BackendCoordinator.")
         try:
+            # --- MODIFICATION: Update call to include request_id ---
             backend_coordinator.request_response_stream(
                 target_backend_id=PLANNER_BACKEND_ID,
+                request_id=summary_request_id, # <-- PASSING THE NEW request_id
                 history_to_send=history_for_summary,
-                is_modification_response_expected=True,  # Treat as mod-like, no direct UI stream
+                is_modification_response_expected=True,
                 options=planner_options,
                 request_metadata=summary_request_metadata
             )
+            # --- END MODIFICATION ---
             logger.info(f"Summary request for '{target_filename}' dispatched successfully.")
             return True
         except Exception as e_dispatch:
