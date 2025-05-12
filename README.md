@@ -4,7 +4,7 @@ Your intelligent AI desktop partner, built on a flexible platform to supercharge
 ---
 
 <p align="center">
-  <strong>[ ava_codeblock.png ]</strong>
+  <img src="assets/ava_codeblock.png" alt="AvA User Interface Screenshot" width="700">
 </p>
 
 ---
@@ -58,11 +58,9 @@ AvA brings a suite of powerful AI capabilities to your desktop, designed and bui
     * Go beyond single-file edits with an AI-driven workflow.
     * A "Planner AI" (e.g., Gemini) strategizes changes across multiple files.
     * A "Generator AI" (e.g., local CodeLlama) implements the code modifications based on the plan.
-* **Extensible Platform Architecture:**
-    * AvA is built with modularity in mind. Its core design (Planner AI + Specialist AI + RAG) can be extended to support various AI models and tasks beyond the initial coding focus. Future plans include broadening support for more model backends (like OpenAI's GPT models) to give users maximum flexibility.
+* **Extensible Platform Architecture:** AvA is built with modularity in mind. Its core design (Planner AI + Specialist AI + RAG) allows users to customize the AI setup for their specific needs and can be extended to support various AI models and tasks beyond the initial coding focus. The current model integrations (Ollama, Gemini) serve as a starting point for testing and demonstration. Future plans include broadening support for many more model backends (like OpenAI's GPT models and others) to give users maximum flexibility and choice.
 * **User-Focused Desktop Experience:**
     * Developed with Python and PyQt6 for a responsive and native desktop feel.
-    * Features a dark theme with "Electric Cyan" accents for a comfortable and modern UI.
     * Project-based organization to manage different contexts and knowledge bases.
 
 ## Current Status
@@ -90,8 +88,8 @@ AvA is currently in Alpha. These instructions guide you on how to run it from th
 
 1.  **Clone the Repository:**
     ```bash
-    git clone [https://github.com/carpsesdema/AvA_Troublemaker.git](https://github.com/YOUR_USERNAME/AVA_REPO_NAME.git)
-    cd AVA_REPO_NAME
+    git clone [https://github.com/carpsesdema/AvA_Troublemaker.git](https://github.com/carpsesdema/AvA_Troublemaker.git)
+    cd AvA_Troublemaker
     ```
 
 2.  **Set up a Virtual Environment (Recommended):**
@@ -182,7 +180,7 @@ AvA is built with a powerful stack of Python libraries and tools:
 
 AvA is currently an alpha release developed by a solo developer. Feedback, bug reports, and feature suggestions are highly welcome and invaluable at this stage!
 
-* **Reporting Issues:** If you encounter any bugs or unexpected behavior, please open an issue on the [GitHub Issues page](https://github.com/YOUR_USERNAME/AVA_REPO_NAME/issues).
+* **Reporting Issues:** If you encounter any bugs or unexpected behavior, please open an issue on the [GitHub Issues page](https://github.com/carpsesdema/AvA_Troublemaker/issues).
 * **Feature Requests:** Have an idea that could make AvA even better? Feel free to submit it as a feature request on the Issues page.
 
 As the project matures, guidelines for code contributions may be established.
@@ -201,6 +199,6 @@ This project is licensed under the Apache License, Version 2.0. See the [LICENSE
 
 ## Contact & Links
 
-* **Website / Landing Page:** [snowballannotation.com](http://snowballannotation.com) (To be updated for AvA launch)
-* **GitHub Repository:** [https://github.com/YOUR_USERNAME/AVA_REPO_NAME](https://github.com/YOUR_USERNAME/AVA_REPO_NAME)
+* **Website / Landing Page:** [snowballannotation.com](http://snowballannotation.com)
+* **GitHub Repository:** [https://github.com/carpsesdema/AvA_Troublemaker](https://github.com/carpsesdema/AvA_Troublemaker)
 * **Developer (Kori):** [carpsesdema@gmail.com](mailto:carpsesdema@gmail.com) (For project-specific inquiries or feedback)
