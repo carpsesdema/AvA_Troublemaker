@@ -1,50 +1,38 @@
 # ui/chat_item_delegate.py
-# UPDATED - Implemented loading indicator within AI message bubbles
-#           Uses loading.gif and loading_complete.png from assets.
-
 import logging
 import base64
 import html
 import hashlib
-import os # Added for path joining
+import os
 from typing import Optional, Dict, Any, Tuple
 from datetime import datetime
 
-# --- PyQt6 Imports ---
 from PyQt6.QtWidgets import QStyledItemDelegate, QStyle, QApplication, QStyleOptionViewItem, QWidget
 from PyQt6.QtGui import (
     QPainter, QColor, QFontMetrics, QTextDocument, QPixmap, QImage, QFont,
-    QImageReader, QPen, QMovie # Added QMovie
+    QMovie, QPen
 )
-from PyQt6.QtCore import QModelIndex, QRect, QPoint, QSize, Qt, QObject, QByteArray, QUrl, QPersistentModelIndex, \
-    pyqtSlot  # Added QPersistentModelIndex
+from PyQt6.QtCore import QModelIndex, QRect, QPoint, QSize, Qt, QObject, QByteArray, QPersistentModelIndex, pyqtSlot
 
-# --- Core Model & Enum Imports ---
 try:
     from core.models import ChatMessage, USER_ROLE, MODEL_ROLE, SYSTEM_ROLE, ERROR_ROLE
     from core.message_enums import MessageLoadingState
-    from ui.chat_list_model import ChatListModel, ChatMessageRole, LoadingStatusRole # Added LoadingStatusRole
-    from utils import constants
-    from utils.constants import CHAT_FONT_FAMILY, CHAT_FONT_SIZE, ASSETS_PATH # Added ASSETS_PATH
-except ImportError: # Fallback for different environment setups
+    from ui.chat_list_model import ChatMessageRole, LoadingStatusRole
+    from utils.constants import CHAT_FONT_FAMILY, CHAT_FONT_SIZE, ASSETS_PATH
+except ImportError:
     try:
         from ..core.models import ChatMessage, USER_ROLE, MODEL_ROLE, SYSTEM_ROLE, ERROR_ROLE # type: ignore
         from ..core.message_enums import MessageLoadingState # type: ignore
-        from ..ui.chat_list_model import ChatListModel, ChatMessageRole, LoadingStatusRole # type: ignore
-        from ..utils import constants # type: ignore
+        from ..ui.chat_list_model import ChatMessageRole, LoadingStatusRole # type: ignore
         from ..utils.constants import CHAT_FONT_FAMILY, CHAT_FONT_SIZE, ASSETS_PATH # type: ignore
     except ImportError as e_imp:
         logging.critical(f"ChatItemDelegate: Failed to import dependencies: {e_imp}")
-        # Define dummy classes/values if import fails
         class ChatMessage: pass # type: ignore
         from enum import Enum, auto
         class MessageLoadingState(Enum): IDLE=auto(); LOADING=auto(); COMPLETED=auto(); ERROR=auto() # type: ignore
-        class ChatListModel: pass # type: ignore
         ChatMessageRole, LoadingStatusRole = 0, 1 # type: ignore
-        class constants: CHAT_FONT_FAMILY="Arial"; CHAT_FONT_SIZE=10; ASSETS_PATH="assets" # type: ignore
+        CHAT_FONT_FAMILY="Arial"; CHAT_FONT_SIZE=10; ASSETS_PATH="assets" # type: ignore
 
-
-# --- Dependency for Markdown ---
 try:
     import markdown
     MARKDOWN_AVAILABLE = True
@@ -53,7 +41,6 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# --- Constants for Delegate ---
 BUBBLE_PADDING_V = 8
 BUBBLE_PADDING_H = 12
 BUBBLE_MARGIN_V = 4
@@ -68,13 +55,10 @@ TIMESTAMP_PADDING_TOP = 3
 TIMESTAMP_HEIGHT = 15
 BUBBLE_MAX_WIDTH_PERCENTAGE = 0.75
 
-# --- Loading Indicator Specifics ---
-INDICATOR_SIZE = QSize(22, 22)  # Desired display size of the loading/completed icon
-INDICATOR_PADDING_X = 5 # Padding from the right edge of the bubble
-INDICATOR_PADDING_Y = 5 # Padding from the bottom edge of the bubble
+INDICATOR_SIZE = QSize(22, 22)
+INDICATOR_PADDING_X = 5
+INDICATOR_PADDING_Y = 5
 
-# --- Colors ---
-# (Colors remain the same as your existing file)
 USER_BUBBLE_COLOR = QColor("#0b93f6")
 USER_TEXT_COLOR = QColor(Qt.GlobalColor.white)
 AI_BUBBLE_COLOR = QColor("#3c3f41")
@@ -98,29 +82,28 @@ class ChatItemDelegate(QStyledItemDelegate):
         self._text_doc_cache: Dict[Tuple[str, int, bool, str], QTextDocument] = {}
         self._image_pixmap_cache: Dict[str, QPixmap] = {}
 
-        # --- For Loading Indicator ---
-        self._loading_animation_movie: Optional[QMovie] = None
+        self._loading_animation_movie_template: Optional[QMovie] = None # Template movie
         self._completed_icon_pixmap: Optional[QPixmap] = None
-        self._active_loading_movies: Dict[QPersistentModelIndex, QMovie] = {} # Track QMovie per item
-        self._view_ref: Optional[QWidget] = None # Reference to the view for updates
+        self._active_loading_movies: Dict[QPersistentModelIndex, QMovie] = {}
+        self._view_ref: Optional[QWidget] = None
 
         self._init_loading_indicator_assets()
         logger.info("ChatItemDelegate initialized with loading indicator assets.")
 
     def _init_loading_indicator_assets(self):
-        """Load the GIF for animation and PNG for completed state."""
         try:
             loading_gif_path = os.path.join(ASSETS_PATH, "loading.gif")
             if os.path.exists(loading_gif_path):
-                self._loading_animation_movie = QMovie(loading_gif_path)
-                if self._loading_animation_movie.isValid():
-                    self._loading_animation_movie.setScaledSize(INDICATOR_SIZE) # Scale the QMovie itself
-                    logger.info(f"Loading GIF '{loading_gif_path}' loaded and scaled to {INDICATOR_SIZE.width()}x{INDICATOR_SIZE.height()}.")
+                # Load as a template
+                self._loading_animation_movie_template = QMovie(loading_gif_path)
+                if self._loading_animation_movie_template.isValid():
+                    self._loading_animation_movie_template.setScaledSize(INDICATOR_SIZE)
+                    logger.info(f"Loading GIF template '{loading_gif_path}' loaded and scaled.")
                 else:
-                    logger.error(f"Failed to load QMovie from '{loading_gif_path}'. Invalid GIF.")
-                    self._loading_animation_movie = None
+                    logger.error(f"Failed to load QMovie template from '{loading_gif_path}'. Invalid GIF.")
+                    self._loading_animation_movie_template = None
             else:
-                logger.error(f"Loading GIF not found at '{loading_gif_path}'.")
+                logger.error(f"Loading GIF template not found at '{loading_gif_path}'.")
 
             completed_png_path = os.path.join(ASSETS_PATH, "loading_complete.png")
             if os.path.exists(completed_png_path):
@@ -137,47 +120,45 @@ class ChatItemDelegate(QStyledItemDelegate):
                     self._completed_icon_pixmap = None
             else:
                 logger.error(f"Completed PNG not found at '{completed_png_path}'.")
-
         except Exception as e:
             logger.exception(f"Error initializing loading indicator assets: {e}")
-            self._loading_animation_movie = None
+            self._loading_animation_movie_template = None
             self._completed_icon_pixmap = None
 
     def setView(self, view: QWidget):
-        """Stores a reference to the view for triggering updates from QMovie."""
         self._view_ref = view
-        if self._loading_animation_movie: # Connect frameChanged if movie is already loaded
-            # Disconnect previous connection if any to avoid multiple connections on view reset
-            try: self._loading_animation_movie.frameChanged.disconnect()
-            except TypeError: pass # No connection to disconnect
-            self._loading_animation_movie.frameChanged.connect(self._on_movie_frame_changed)
+        # No global movie connection here; connections are per-instance
 
     @pyqtSlot(int)
     def _on_movie_frame_changed(self, frame_number: int):
-        """Slot to handle QMovie frame changes and trigger view updates for relevant items."""
-        if self._view_ref and self._active_loading_movies:
-            movie_sender = self.sender() # Get the QMovie instance that emitted the signal
-            for p_index, active_movie in list(self._active_loading_movies.items()): # Iterate over a copy for safe removal
-                if active_movie == movie_sender:
-                    if p_index.isValid() and self._view_ref.model().data(p_index, LoadingStatusRole) == MessageLoadingState.LOADING:
-                        logger.debug(f"Delegate: Movie frame changed for item at row {p_index.row()}. Updating view.")
-                        self._view_ref.update(p_index) # Trigger repaint for the specific item
-                    else:
-                        # Stale entry or state changed, remove it
-                        logger.debug(f"Delegate: Removing stale/invalid QMovie from active_movies for row {p_index.row()}.")
-                        active_movie.stop()
-                        active_movie.deleteLater() # Clean up QMovie
-                        del self._active_loading_movies[p_index]
-                    break # Found the sender
+        if not self._view_ref or not self._active_loading_movies:
+            return
 
+        movie_sender = self.sender()
+        if not isinstance(movie_sender, QMovie):
+            return
+
+        for p_index, active_movie in list(self._active_loading_movies.items()):
+            if active_movie == movie_sender:
+                if p_index.isValid() and self._view_ref.model() and \
+                   self._view_ref.model().data(p_index, LoadingStatusRole) == MessageLoadingState.LOADING:
+                    self._view_ref.update(p_index)
+                else: # Stale entry or state changed
+                    logger.debug(f"Delegate: Removing stale/invalid QMovie for row {p_index.row()}.")
+                    active_movie.stop()
+                    active_movie.frameChanged.disconnect(self._on_movie_frame_changed)
+                    active_movie.deleteLater()
+                    del self._active_loading_movies[p_index]
+                break
 
     def clearCache(self):
         logger.debug("Clearing ChatItemDelegate cache.")
         self._text_doc_cache.clear()
         self._image_pixmap_cache.clear()
-        # Also clear active QMovie instances
-        for movie in self._active_loading_movies.values():
+        for p_index, movie in list(self._active_loading_movies.items()):
             movie.stop()
+            try: movie.frameChanged.disconnect(self._on_movie_frame_changed)
+            except TypeError: pass
             movie.deleteLater()
         self._active_loading_movies.clear()
 
@@ -188,13 +169,11 @@ class ChatItemDelegate(QStyledItemDelegate):
         message = index.data(ChatMessageRole)
         if not isinstance(message, ChatMessage):
             super().paint(painter, option, index)
-            painter.restore()
-            return
+            painter.restore(); return
 
-        # --- Get Loading State ---
         loading_status = index.model().data(index, LoadingStatusRole)
         if not isinstance(loading_status, MessageLoadingState):
-            loading_status = MessageLoadingState.IDLE # Default if role data is missing
+            loading_status = MessageLoadingState.IDLE
 
         is_user = (message.role == USER_ROLE)
         bubble_color, _ = self._get_colors(message.role)
@@ -242,9 +221,8 @@ class ChatItemDelegate(QStyledItemDelegate):
                         image_count += 1
                     else: break
 
-        # --- Draw Loading/Completed Indicator for AI Messages ---
-        if message.role == MODEL_ROLE and content_width_constraint > 0: # Only for AI messages
-            persistent_index = QPersistentModelIndex(index)
+        persistent_index = QPersistentModelIndex(index) # Use persistent index for map keys
+        if message.role == MODEL_ROLE and content_width_constraint > 0:
             indicator_x = bubble_rect.right() - INDICATOR_SIZE.width() - INDICATOR_PADDING_X
             indicator_y = bubble_rect.bottom() - INDICATOR_SIZE.height() - INDICATOR_PADDING_Y
             indicator_rect = QRect(QPoint(indicator_x, indicator_y), INDICATOR_SIZE)
@@ -252,50 +230,28 @@ class ChatItemDelegate(QStyledItemDelegate):
             if loading_status == MessageLoadingState.LOADING:
                 active_movie = self._active_loading_movies.get(persistent_index)
                 if not active_movie:
-                    if self._loading_animation_movie: # Use the pre-loaded one as a template
-                        # Create a new QMovie instance for this item to manage its state independently
-                        active_movie = QMovie(self._loading_animation_movie.fileName(), QByteArray(), self) # Parent to delegate
+                    if self._loading_animation_movie_template:
+                        active_movie = QMovie(self._loading_animation_movie_template.fileName(), QByteArray(), self)
                         if active_movie.isValid():
-                            active_movie.setScaledSize(INDICATOR_SIZE) # Ensure new instance is scaled
-                            # Connect its frameChanged to the delegate's slot for updates
+                            active_movie.setScaledSize(INDICATOR_SIZE)
                             active_movie.frameChanged.connect(self._on_movie_frame_changed)
-                            active_movie.start()
                             self._active_loading_movies[persistent_index] = active_movie
-                            logger.debug(f"Delegate: Started new QMovie for LOADING AI message at row {index.row()}")
-                        else:
-                            logger.error(f"Delegate: Failed to create new QMovie instance for row {index.row()}.")
-                            active_movie = None # Ensure it's None if creation failed
-                    else: # Fallback if the main _loading_animation_movie wasn't loaded
-                        logger.warning(f"Delegate: Main loading animation movie not available for row {index.row()}.")
-
+                            active_movie.start()
+                        else: active_movie = None; logger.error("Failed to create new QMovie for loading item.")
                 if active_movie and active_movie.isValid():
-                    current_frame_pixmap = active_movie.currentPixmap()
-                    if not current_frame_pixmap.isNull():
-                        painter.drawPixmap(indicator_rect, current_frame_pixmap)
-                    else:
-                         logger.warning(f"Delegate: QMovie for row {index.row()} returned null pixmap for current frame.")
+                    painter.drawPixmap(indicator_rect, active_movie.currentPixmap())
 
             elif loading_status == MessageLoadingState.COMPLETED:
-                # Stop and remove movie if it was playing for this index
                 if persistent_index in self._active_loading_movies:
                     old_movie = self._active_loading_movies.pop(persistent_index)
-                    old_movie.stop()
-                    old_movie.deleteLater() # Clean up QMovie
-                    logger.debug(f"Delegate: Stopped and removed QMovie for COMPLETED AI message at row {index.row()}.")
-
-                if self._completed_icon_pixmap and not self._completed_icon_pixmap.isNull():
+                    old_movie.stop(); old_movie.frameChanged.disconnect(self._on_movie_frame_changed); old_movie.deleteLater()
+                if self._completed_icon_pixmap:
                     painter.drawPixmap(indicator_rect, self._completed_icon_pixmap)
-
-            elif loading_status == MessageLoadingState.IDLE or loading_status == MessageLoadingState.ERROR:
-                 # Ensure any active movie for this index is stopped and removed if state changed unexpectedly
+            else: # IDLE or ERROR
                 if persistent_index in self._active_loading_movies:
                     old_movie = self._active_loading_movies.pop(persistent_index)
-                    old_movie.stop()
-                    old_movie.deleteLater() # Clean up QMovie
-                    logger.debug(f"Delegate: Stopped/removed QMovie for AI message at row {index.row()} (state became IDLE/ERROR).")
-                # Optionally draw an error icon for MessageLoadingState.ERROR here
+                    old_movie.stop(); old_movie.frameChanged.disconnect(self._on_movie_frame_changed); old_movie.deleteLater()
 
-        # --- Draw Timestamp ---
         formatted_timestamp = self._format_timestamp(message.timestamp)
         if formatted_timestamp:
             timestamp_width = self._timestamp_font_metrics.horizontalAdvance(formatted_timestamp)
@@ -338,7 +294,6 @@ class ChatItemDelegate(QStyledItemDelegate):
         final_height = max(final_height, min_total_item_height)
         return QSize(final_width, final_height)
 
-    # --- Helper Methods (largely unchanged, but _calculate_content_size is important) ---
     def _get_colors(self, role: str) -> tuple[QColor, QColor]:
         if role == USER_ROLE: return USER_BUBBLE_COLOR, USER_TEXT_COLOR
         if role == SYSTEM_ROLE: return SYSTEM_BUBBLE_COLOR, SYSTEM_TEXT_COLOR
@@ -413,7 +368,6 @@ class ChatItemDelegate(QStyledItemDelegate):
             min_bubble_base_height = self._font_metrics.height() + 2 * BUBBLE_PADDING_V
             return QSize(MIN_BUBBLE_WIDTH + 2 * BUBBLE_PADDING_H, min_bubble_base_height)
 
-
     def _get_prepared_text_document(self, message: ChatMessage, width_constraint: int) -> QTextDocument:
         is_streaming = (message.metadata is not None) and message.metadata.get("is_streaming", False)
         text_content = message.text if message.text else ""
@@ -432,44 +386,61 @@ class ChatItemDelegate(QStyledItemDelegate):
         doc.setDocumentMargin(0)
         _, text_color = self._get_colors(message.role)
         html_content = self._prepare_html(text_content, text_color, is_streaming)
-        # Stylesheet content remains the same as your existing file
-        doc.setDefaultStyleSheet(f"""
+
+        # Load the bubble_style.qss content
+        bubble_stylesheet_content = ""
+        try:
+            bubble_style_path = os.path.join(os.path.dirname(__file__), "bubble_style.qss") # Path relative to this file
+            if os.path.exists(bubble_style_path):
+                with open(bubble_style_path, "r", encoding="utf-8") as f_style:
+                    bubble_stylesheet_content = f_style.read()
+            else:
+                logger.warning(f"bubble_style.qss not found at {bubble_style_path}. Markdown rendering might be basic.")
+        except Exception as e_style:
+            logger.error(f"Error loading bubble_style.qss: {e_style}")
+
+        # Fallback internal styles if bubble_style.qss fails or is minimal
+        internal_styles = f"""
+            body {{ color:{text_color.name()}; }} /* Ensure base text color is set */
             p {{ margin: 0 0 8px 0; padding: 0; line-height: 130%; }}
             ul, ol {{ margin: 3px 0 8px 20px; padding: 0; }}
             li {{ margin-bottom: 4px; }}
+            /* Minimal pre style if bubble_style.qss is missing */
             pre {{ background-color: {CODE_BG_COLOR.name()}; border: 1px solid {BUBBLE_BORDER_COLOR.name()}; padding: 8px; margin: 6px 0; border-radius: 4px; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word; font-family: '{self._font.family()}', monospace; font-size: {self._font.pointSize()}pt; color: {AI_TEXT_COLOR.name()}; line-height: 120%; }}
             code {{ background-color: {CODE_BG_COLOR.lighter(110).name()}; padding: 1px 3px; border-radius: 3px; font-family: '{self._font.family()}', monospace; font-size: {int(self._font.pointSize() * 0.95)}pt; color: {AI_TEXT_COLOR.lighter(120).name()}; }}
-            table {{ border-collapse: collapse; margin: 8px 0; color: {text_color.name()}; background-color: {CODE_BG_COLOR.lighter(105).name()}; }}
-            th, td {{ border: 1px solid {BUBBLE_BORDER_COLOR.name()}; padding: 4px 6px; }}
-            th {{ background-color: {CODE_BG_COLOR.lighter(120).name()}; font-weight: bold; }}
-            td {{ color: #a9b7c6; }}
-            a {{ color: #61afef; text-decoration: underline; }}
-            a:hover {{ color: #82c0ff; }}
-            blockquote {{ border-left: 3px solid {text_color.darker(120).name()}; margin: 8px 0px 8px 5px; padding-left: 10px; color: {text_color.darker(110).name()}; font-style: italic; }}
-            h1, h2, h3, h4, h5, h6 {{ margin-top: 10px; margin-bottom: 5px; font-weight: bold; color: {text_color.lighter(110).name()}; }}
-            h1 {{ font-size: 1.4em; border-bottom: 1px solid {BUBBLE_BORDER_COLOR.name()}; }}
-            h2 {{ font-size: 1.2em; border-bottom: 1px solid {BUBBLE_BORDER_COLOR.name()}; }}
-            h3 {{ font-size: 1.1em; }} h4 {{ font-size: 1.0em; }} h5 {{ font-size: 0.9em; }}
-            h6 {{ font-size: 0.9em; font-style: italic; color: {text_color.darker(110).name()}; }}
-            hr {{ border: 0; height: 1px; background-color: {BUBBLE_BORDER_COLOR.name()}; margin: 12px 0; }}
-        """)
+            /* Add other critical fallbacks as needed */
+        """
+        final_stylesheet = bubble_stylesheet_content + "\n" + internal_styles
+        doc.setDefaultStyleSheet(final_stylesheet)
+
         doc.setHtml(html_content)
         doc.setTextWidth(max(width_constraint, 1))
+        if len(self._text_doc_cache) > 100: # Simple cache eviction
+            self._text_doc_cache.popitem() # Remove last item (approximates LRU for dict)
         self._text_doc_cache[cache_key] = doc
         return doc
 
     def _prepare_html(self, text: str, text_color: QColor, is_streaming: bool) -> str:
         if not text: return ""
-        escaped_text = html.escape(text)
-        html_content = escaped_text.replace('\n', '<br/>')
+        # Base HTML structure, color is applied via stylesheet in _get_prepared_text_document
+        html_body_content = ""
         if not is_streaming and MARKDOWN_AVAILABLE:
             try:
+                # Convert Markdown to HTML
+                # Ensure `extra` and `sane_lists` are available if your markdown lib supports them
+                # Fenced code is common for code blocks. nl2br converts newlines to <br>.
                 md_content = markdown.markdown(text, extensions=['fenced_code', 'nl2br', 'tables', 'sane_lists', 'extra'])
-                html_content = md_content
+                html_body_content = md_content
             except Exception as e:
-                logger.error(f"Markdown conversion failed: {e}. Using escaped text.")
-                html_content = escaped_text.replace('\n', '<br/>')
-        return f"""<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="color:{text_color.name()};">{html_content}</body></html>"""
+                logger.error(f"Markdown conversion failed: {e}. Using escaped plain text.")
+                # Fallback: escape HTML special characters and replace newlines with <br>
+                html_body_content = html.escape(text).replace('\n', '<br/>')
+        else:
+            # If streaming or Markdown not available, just escape and replace newlines
+            html_body_content = html.escape(text).replace('\n', '<br/>')
+
+        # Wrap content in basic HTML structure. Styles are applied via setDefaultStyleSheet.
+        return f"""<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body>{html_body_content}</body></html>"""
 
     def _get_image_pixmap(self, image_part: Dict[str, Any]) -> Optional[QPixmap]:
         base64_data = image_part.get("data")
@@ -484,7 +455,10 @@ class ChatItemDelegate(QStyledItemDelegate):
             qimage = QImage()
             if qimage.loadFromData(image_bytes):
                  pixmap = QPixmap.fromImage(qimage)
-                 if not pixmap.isNull(): self._image_pixmap_cache[data_hash] = pixmap; return pixmap
+                 if not pixmap.isNull():
+                     if len(self._image_pixmap_cache) > 50: self._image_pixmap_cache.popitem()
+                     self._image_pixmap_cache[data_hash] = pixmap
+                     return pixmap
         except Exception as e: logger.error(f"Error decoding/loading image in delegate: {e}")
         return None
 
