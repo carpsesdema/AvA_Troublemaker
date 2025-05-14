@@ -1,10 +1,10 @@
-# AvA: Advanced Versatile Assistant
+ AvA: Advanced Versatile Assistant
 Your intelligent AI desktop partner, built on a flexible platform to supercharge complex tasks and workflows.
 
 ---
 
 <p align="center">
-  <img src="assets/ava_codeblock.png" alt="AvA User Interface Screenshot" width="700">
+  <img src="assets/AvA_Responding.gif" alt="AvA Demo - AI Assistant Responding" width="700">
 </p>
 
 ---

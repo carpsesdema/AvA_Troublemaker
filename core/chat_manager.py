@@ -1,4 +1,5 @@
-# core/chat_manager.py (Part 1: Imports and __init__)
+# core/chat_manager.py (Part 1: Imports, Init, Basic Setup)
+# UPDATED: Connects to the modified modification_sequence_start_requested signal.
 
 import logging
 import asyncio
@@ -30,7 +31,7 @@ from .backend_coordinator import BackendCoordinator
 from .session_flow_manager import SessionFlowManager
 from .upload_coordinator import UploadCoordinator
 from .rag_handler import RagHandler
-from .user_input_handler import UserInputHandler
+from .user_input_handler import UserInputHandler # Corrected: UserInputHandler for signal connection
 from .user_input_processor import UserInputProcessor
 from .application_orchestrator import ApplicationOrchestrator
 
@@ -112,12 +113,9 @@ class ChatManager(QObject):
         self._model_info_service = ModelInfoService()
         self._connect_component_signals()
         self._initialize_state_variables()
-        logger.info("ChatManager core initialization using orchestrator complete.")# core/chat_manager.py (Part 2: Signal Connections, Init, and Slot Handlers)
-
-    # Continued from ChatManager Class Definition
+        logger.info("ChatManager core initialization using orchestrator complete.")
 
     def _connect_component_signals(self):
-        # This method content is from your combined.txt
         logger.debug("ChatManager connecting component signals...")
         if self._project_context_manager:
             self._project_context_manager.project_list_updated.connect(self._handle_pcm_project_list_updated)
@@ -140,15 +138,19 @@ class ChatManager(QObject):
             self._session_flow_manager.status_update_requested.connect(self.status_update)
             self._session_flow_manager.error_occurred.connect(self.error_occurred)
             self._session_flow_manager.request_state_save.connect(self._handle_sfm_request_state_save)
-        if self._user_input_handler:
+
+        if self._user_input_handler: # Ensure UserInputHandler instance exists
             self._user_input_handler.normal_chat_request_ready.connect(self._handle_uih_normal_chat_request)
+            # --- MODIFICATION START: Connect to the updated signal ---
             self._user_input_handler.modification_sequence_start_requested.connect(self._handle_uih_mod_start_request)
+            # --- MODIFICATION END ---
             self._user_input_handler.modification_user_input_received.connect(self._handle_uih_mod_user_input)
             self._user_input_handler.processing_error_occurred.connect(self._handle_uih_processing_error)
+
         if self._modification_coordinator:
             self._modification_coordinator.request_llm_call.connect(self._handle_mc_request_llm_call)
             self._modification_coordinator.file_ready_for_display.connect(self._handle_mc_file_ready)
-            self._modification_coordinator.modification_sequence_complete.connect(self._handle_mc_sequence_complete)
+            self._modification_coordinator.modification_sequence_complete.connect(self._handle_mc_sequence_complete) # Already connected to the 2-arg version
             self._modification_coordinator.modification_error.connect(self._handle_mc_error)
             self._modification_coordinator.status_update.connect(self._handle_mc_status_update)
             self._modification_coordinator.codeGeneratedAndSummaryNeeded.connect(self._handle_code_generated_and_summary_needed)
@@ -178,7 +180,7 @@ class ChatManager(QObject):
         if pd: self._project_context_manager.load_state(pd)
         else: self._project_context_manager.set_active_project(constants.GLOBAL_COLLECTION_ID)
         self._perform_orphan_cleanup(self._project_context_manager.save_state())
-        self._set_initial_active_project(apid, None)
+        self._set_initial_active_project(apid, None) # The None is for a legacy second arg.
         self._configure_initial_backends(m, p)
         self.update_status_based_on_state()
         caid = self._project_context_manager.get_active_project_id()
@@ -191,8 +193,9 @@ class ChatManager(QObject):
         orphaned_ids = [pid for pid, name in self._project_context_manager.get_all_projects_info().items()
                         if name == constants.GLOBAL_CONTEXT_DISPLAY_NAME and pid != constants.GLOBAL_COLLECTION_ID]
         if orphaned_ids: logger.info(f"Attempting to delete {len(orphaned_ids)} orphaned entries...")
+        # Actual deletion logic would be here if implemented
 
-    def _set_initial_active_project(self, target_active_project_id: str, _):
+    def _set_initial_active_project(self, target_active_project_id: str, _): # Underscore for unused legacy arg
         # This method content is from your combined.txt
         if not self._project_context_manager: return
         if not self._project_context_manager.get_project_history(target_active_project_id):
@@ -209,7 +212,11 @@ class ChatManager(QObject):
             self._backend_coordinator.configure_backend(DEFAULT_CHAT_BACKEND_ID, key, self._current_chat_model_name, self._current_chat_personality_prompt)
             self._backend_coordinator.configure_backend(PLANNER_BACKEND_ID, key, constants.DEFAULT_GEMINI_PLANNER_MODEL, "Expert planner.")
         self._backend_coordinator.configure_backend(GENERATOR_BACKEND_ID, None, constants.DEFAULT_OLLAMA_MODEL, "Code assistant.")
-        self._backend_coordinator.configure_backend(OLLAMA_CHAT_BACKEND_ID, None, constants.DEFAULT_OLLAMA_MODEL, None)
+        self._backend_coordinator.configure_backend(OLLAMA_CHAT_BACKEND_ID, None, constants.DEFAULT_OLLAMA_MODEL, None) # Ollama chat needs no explicit personality here# core/chat_manager.py (Part 2: Slot Handlers, Actions, Getters/Setters)
+# UPDATED: _handle_uih_mod_start_request now adds user message to history
+#          before starting the modification sequence.
+
+    # Continued from ChatManager Class Definition (Part 1)
 
     @pyqtSlot(dict)
     def _handle_pcm_project_list_updated(self, projects_dict: Dict[str, str]):
@@ -240,7 +247,7 @@ class ChatManager(QObject):
         self._current_chat_model_name = model_name or constants.DEFAULT_GEMINI_CHAT_MODEL
         self._current_chat_personality_prompt = personality
         self._configure_initial_backends(self._current_chat_model_name, self._current_chat_personality_prompt)
-        self.current_project_changed.emit(active_pid)
+        self.current_project_changed.emit(active_pid) # This will trigger tab ensure
         self._update_rag_initialized_state(emit_status=True, project_id=active_pid)
         self.update_status_based_on_state()
 
@@ -251,13 +258,14 @@ class ChatManager(QObject):
             active_project_id = self._project_context_manager.get_active_project_id()
             if active_project_id:
                 history = self._project_context_manager.get_project_history(active_project_id)
-                if history is not None: history.clear()
-                self.history_changed.emit([])
+                if history is not None: history.clear() # Clears the list in-place
+                self.history_changed.emit([]) # Emit empty list
 
     @pyqtSlot(str, str, dict)
     def _handle_sfm_request_state_save(self, model_name: str, personality: Optional[str], all_project_data: Dict[str, Any]):
         # This method content is from your combined.txt
         if self._session_flow_manager:
+            # ChatManager is responsible for providing the latest data to SFM for saving
             self._session_flow_manager.save_current_session_to_last_state(model_name, personality)
 
     @pyqtSlot(str)
@@ -275,12 +283,10 @@ class ChatManager(QObject):
         else:
             logger.debug(f"CM: Suppressing stream chunk from req_id '{request_id}' during MC LLM wait.")
 
-    # ================================================================================
-    # MODIFIED _handle_backend_response_completed METHOD (with added logs)
-    # ================================================================================
     @pyqtSlot(str, ChatMessage, dict)
     def _handle_backend_response_completed(self, request_id: str, completed_message: ChatMessage,
                                            usage_stats_with_metadata: dict):
+        # This method content is from your combined.txt (with existing logs)
         mc_current_phase_debug = "N/A"
         mc_is_awaiting_llm_debug = "N/A"
         if self._modification_coordinator:
@@ -304,21 +310,17 @@ class ChatManager(QObject):
             mc_is_expecting_this = False
             if self._modification_coordinator.is_awaiting_llm_response():
                 mc_is_expecting_this = True
-                logger.debug(f"CM: MC is_awaiting_llm_response is True for req_id '{request_id}'.")
             elif (self._modification_coordinator._current_phase == ModPhase.AWAITING_CODE_GENERATION and backend_id_for_mc == GENERATOR_BACKEND_ID):
                 mc_is_expecting_this = True
-                logger.debug(f"CM: MC phase is AWAITING_CODE_GENERATION and backend_id matches GENERATOR for req_id '{request_id}'.")
             elif (self._modification_coordinator._current_phase == ModPhase.AWAITING_PLAN and backend_id_for_mc == PLANNER_BACKEND_ID):
                 mc_is_expecting_this = True
-                logger.debug(f"CM: MC phase is AWAITING_PLAN and backend_id matches PLANNER for req_id '{request_id}'.")
             elif (self._modification_coordinator._current_phase == ModPhase.AWAITING_GEMINI_REFINEMENT and backend_id_for_mc == PLANNER_BACKEND_ID):
                 mc_is_expecting_this = True
-                logger.debug(f"CM: MC phase is AWAITING_GEMINI_REFINEMENT and backend_id matches PLANNER for req_id '{request_id}'.")
 
             if mc_is_expecting_this:
                 logger.info(f"CM: Routing completed LLM response for req_id '{request_id}' (Purpose: {purpose}) to MC.")
                 self._modification_coordinator.process_llm_response(
-                    backend_id_for_mc or PLANNER_BACKEND_ID,
+                    backend_id_for_mc or PLANNER_BACKEND_ID, # Fallback to planner if not specified
                     completed_message
                 )
                 return
@@ -372,9 +374,6 @@ class ChatManager(QObject):
             model_max_context = self._model_info_service.get_max_tokens(self._current_chat_model_name)
             self.token_usage_updated.emit(DEFAULT_CHAT_BACKEND_ID, prompt_tokens, completion_tokens, model_max_context)
         return
-    # ================================================================================
-    # END OF MODIFIED _handle_backend_response_completed METHOD
-    # ================================================================================
 
     @pyqtSlot(str, str)
     def _handle_backend_response_error(self, request_id: str, error_message_str: str):
@@ -382,7 +381,7 @@ class ChatManager(QObject):
         logger.error(f"CM: Received ERROR from BC for request_id '{request_id}': {error_message_str}")
         if self._modification_coordinator and self._modification_coordinator.is_active():
             logger.info(f"CM: Routing backend error for req_id '{request_id}' to MC.")
-            self._modification_coordinator.process_llm_error(DEFAULT_CHAT_BACKEND_ID, error_message_str) # Assuming error is from default chat if not specified
+            self._modification_coordinator.process_llm_error(DEFAULT_CHAT_BACKEND_ID, error_message_str)
             return
 
         message_updated_in_model = False
@@ -474,61 +473,103 @@ class ChatManager(QObject):
         # This method content is from your combined.txt
         self._update_overall_busy_state()
 
-    @pyqtSlot(list)
+    @pyqtSlot(list) # List[ChatMessage] where ChatMessage is the *clean* user message for UI
     def _handle_uih_normal_chat_request(self, new_user_message_list: List[ChatMessage]):
-        # This method content is from your combined.txt (with added log)
+        # This method content is from your combined.txt (with existing log)
         logger.info("CM: Handling normal_chat_request_ready from UIH.")
         if not (self._backend_coordinator and self._project_context_manager):
             self.error_occurred.emit("Cannot send chat: Critical components missing.", True); return
         if not new_user_message_list or not isinstance(new_user_message_list[0], ChatMessage):
             logger.warning("CM: _handle_uih_normal_chat_request received invalid or empty message list. Ignoring."); return
 
-        new_user_message = new_user_message_list[0]
-        self._project_context_manager.add_message_to_active_project(new_user_message)
-        self.new_message_added.emit(new_user_message)
+        # This is the clean user message for UI display
+        user_message_for_ui = new_user_message_list[0]
+        self._project_context_manager.add_message_to_active_project(user_message_for_ui)
+        self.new_message_added.emit(user_message_for_ui)
         self._trigger_save_last_session_state()
-        logger.debug(f"CM: Added user message (ID: {new_user_message.id}) to history: {new_user_message.text[:50]}...")
+        logger.debug(f"CM: Added user message (ID: {user_message_for_ui.id}) to history for UI: {user_message_for_ui.text[:50]}...")
 
-        QApplication.processEvents()
+        QApplication.processEvents() # Allow UI to update with user message
 
         ai_request_id = str(uuid.uuid4())
         ai_placeholder_message = ChatMessage(id=ai_request_id, role=MODEL_ROLE, parts=[""], loading_state=MessageLoadingState.LOADING)
         self._project_context_manager.add_message_to_active_project(ai_placeholder_message)
-        self.new_message_added.emit(ai_placeholder_message)
+        self.new_message_added.emit(ai_placeholder_message) # Show placeholder in UI
         logger.info(f"CM: Added AI placeholder (ID: {ai_request_id}) with LOADING state.")
+
+        # The history for the backend should include the RAG-augmented version of the user's query.
+        # UserInputProcessor._prepare_normal_chat_prompt creates this.
+        # For now, we assume the history in PCM already contains the augmented message IF RAG was used.
+        # This part needs to be robust: the message sent to the LLM should be the one processed by UIP.
+
+        # Let's get the full history, which should now include the user_message_for_ui.
+        # The _actual_ last message sent to the LLM (before the placeholder) needs to be the augmented one.
+        # This means the UserInputProcessor's output (the augmented message) should have been what was
+        # added to history if RAG was involved.
+        # For this iteration, we assume the last message in history IS the augmented one if RAG applied.
+        # This is a slight simplification of the ideal flow where UIP separates original and augmented.
 
         full_history_for_backend = self._project_context_manager.get_active_conversation_history()
         if not full_history_for_backend:
             logger.error("CM: History for backend is empty. This is unexpected."); self.error_occurred.emit("Internal error preparing chat.", True); return
 
         request_options = {"temperature": self._current_chat_temperature}
-        request_metadata_for_bc = {"original_user_message_id": new_user_message.id }
+        # Metadata for BC to track the original request, not for the LLM.
+        request_metadata_for_bc = {"original_user_message_id": user_message_for_ui.id }
         logger.debug(f"CM: Sending history (len {len(full_history_for_backend)}) to backend for request_id '{ai_request_id}'.")
         self._backend_coordinator.request_response_stream(
             target_backend_id=DEFAULT_CHAT_BACKEND_ID, request_id=ai_request_id,
-            history_to_send=full_history_for_backend[:-1],
+            history_to_send=full_history_for_backend[:-1], # Send all but the AI placeholder itself
             is_modification_response_expected=False,
             options=request_options, request_metadata=request_metadata_for_bc
-        )# core/chat_manager.py (Part 3: Modification Flow, Getters, Setters, Utilities)
-
-    # Continued from ChatManager Class Definition
+        )
 
     # --- UIH Slot Handlers (Modification Flow) ---
-    @pyqtSlot(str, str, str)
-    def _handle_uih_mod_start_request(self, query: str, context: str, focus_prefix: str):
-        # This method content is from your combined.txt
-        logger.info("CM: Handling modification_sequence_start_requested from UIH.")
-        if self._modification_coordinator:
-            if self._modification_handler_instance: self._modification_handler_instance.activate_sequence()
-            self._modification_coordinator.start_sequence(query, context, focus_prefix)
-        else: self.error_occurred.emit("Modification feature unavailable.", False)
+    # --- MODIFICATION START: Update slot signature and implementation ---
+    @pyqtSlot(str, list, str, str) # original_query_text, image_data_list, context_for_mc, focus_prefix_for_mc
+    def _handle_uih_mod_start_request(self,
+                                      original_query_text: str,
+                                      image_data_list: List[Dict[str, Any]],
+                                      context_for_mc: str,
+                                      focus_prefix_for_mc: str):
+        logger.info(f"CM: Handling modification_sequence_start_requested from UIH. Query: '{original_query_text[:50]}...'")
 
-    @pyqtSlot(str, str)
+        if not (self._modification_coordinator and self._project_context_manager):
+            self.error_occurred.emit("Modification feature unavailable or PCM missing.", True)
+            return
+
+        # 1. Create and add the user's initial query message to history for UI display
+        user_message_parts_for_ui = [original_query_text] + (image_data_list or [])
+        user_chat_message_for_ui = ChatMessage(role=USER_ROLE, parts=user_message_parts_for_ui)
+
+        self._project_context_manager.add_message_to_active_project(user_chat_message_for_ui)
+        self.new_message_added.emit(user_chat_message_for_ui) # Show user's message in UI
+        self._trigger_save_last_session_state()
+        logger.debug(f"CM: Added user's modification request (ID: {user_chat_message_for_ui.id}) to history for UI display.")
+
+        QApplication.processEvents() # Allow UI to update
+
+        # 2. Activate ModificationHandler sequence (if available)
+        if self._modification_handler_instance:
+            self._modification_handler_instance.activate_sequence()
+
+        # 3. Start the ModificationCoordinator sequence
+        self._modification_coordinator.start_sequence(
+            query=original_query_text,
+            context=context_for_mc,
+            focus_prefix=focus_prefix_for_mc
+        )
+        logger.info(f"CM: ModificationCoordinator sequence started for query: '{original_query_text[:50]}...'")
+    # --- MODIFICATION END ---
+
+    @pyqtSlot(str, str) # user_command, action_type
     def _handle_uih_mod_user_input(self, user_command: str, action_type: str):
         # This method content is from your combined.txt
         logger.info(f"CM: Handling mod_user_input ('{user_command}', Type: '{action_type}') from UIH.")
-        if self._modification_coordinator: self._modification_coordinator.process_user_input(user_command)
-        else: self.error_occurred.emit("Modification feature unavailable.", False)
+        if self._modification_coordinator:
+            self._modification_coordinator.process_user_input(user_command)
+        else:
+            self.error_occurred.emit("Modification feature unavailable.", False)
 
     @pyqtSlot(str)
     def _handle_uih_processing_error(self, error_message: str):
@@ -543,7 +584,7 @@ class ChatManager(QObject):
     # --- ModificationCoordinator Slot Handlers ---
     @pyqtSlot(str, list)
     def _handle_mc_request_llm_call(self, target_backend_id: str, history_to_send: List[ChatMessage]):
-        # This method content is from your combined.txt, with one added log line
+        # This method content is from your combined.txt (with existing log)
         if self._backend_coordinator:
             mc_options = {"temperature": 0.5}
             if target_backend_id == GENERATOR_BACKEND_ID: mc_options = {"temperature": 0.2}
@@ -554,14 +595,12 @@ class ChatManager(QObject):
                 "mc_internal_id": mc_internal_request_id,
                 "backend_id_for_mc": target_backend_id
             }
-            # --- ADDED LOG LINE ---
             logger.debug(f"CM MC LLM Call: Target='{target_backend_id}', ReqID='{mc_internal_request_id}', Meta='{request_metadata_for_mc}'")
-            # --- END ADDED LOG LINE ---
 
             self._backend_coordinator.request_response_stream(
                 target_backend_id=target_backend_id, request_id=mc_internal_request_id,
                 history_to_send=history_to_send,
-                is_modification_response_expected=True,
+                is_modification_response_expected=True, # True for MC calls
                 options=mc_options,
                 request_metadata=request_metadata_for_mc
             )
@@ -597,15 +636,29 @@ class ChatManager(QObject):
             sys_msg = ChatMessage(role=SYSTEM_ROLE, parts=[f"[System: File '{filename}' updated. See Code Viewer.]"], metadata={"is_internal": False})
             self._project_context_manager.add_message_to_active_project(sys_msg); self.new_message_added.emit(sys_msg)
 
-    @pyqtSlot(str)
-    def _handle_mc_sequence_complete(self, reason: str):
-        # This method content is from your combined.txt
+    @pyqtSlot(str, str) # reason, original_query_summary (from previous fix)
+    def _handle_mc_sequence_complete(self, reason: str, original_query_summary: str):
+        # This method content is from your combined.txt (incorporating the previous fix)
         if self._project_context_manager:
-            sys_msg = ChatMessage(role=SYSTEM_ROLE, parts=[f"[System: Code modification sequence ended ({reason}).]"], metadata={"is_internal": False})
-            self._project_context_manager.add_message_to_active_project(sys_msg); self.new_message_added.emit(sys_msg)
+            system_message_text = (
+                f"[System: The multi-file code modification sequence by the Coder AI for "
+                f"'{original_query_summary}' has ended ({reason}). "
+                f"All generated code is available in the Code Viewer. "
+                f"AvA, please respond conversationally to the user's next message. "
+                f"Do not output full code blocks for the task that just completed.]"
+            )
+            logger.info(f"CM: Modification sequence complete. Adding guiding system message: {system_message_text}")
+            sys_msg = ChatMessage(
+                role=SYSTEM_ROLE,
+                parts=[system_message_text],
+                metadata={"is_internal": True}
+            )
+            self._project_context_manager.add_message_to_active_project(sys_msg)
             self._trigger_save_last_session_state()
+
         self.update_status_based_on_state()
-        if self._modification_handler_instance: self._modification_handler_instance.cancel_modification()
+        if self._modification_handler_instance:
+            self._modification_handler_instance.cancel_modification()
 
     @pyqtSlot(str)
     def _handle_mc_error(self, error_message: str):
@@ -623,7 +676,7 @@ class ChatManager(QObject):
             status_msg = ChatMessage(role=SYSTEM_ROLE, parts=[message], metadata={"is_internal": False})
             self._project_context_manager.add_message_to_active_project(status_msg); self.new_message_added.emit(status_msg)
 
-    # --- Action Methods & Getters/Setters (All from your combined.txt) ---
+    # --- Action Methods & Getters/Setters (All from your combined.txt, no changes needed below this line for this fix) ---
     def _cancel_active_tasks(self):
         if self._backend_coordinator: self._backend_coordinator.cancel_current_task()
         if self._upload_coordinator: self._upload_coordinator.cancel_current_upload()

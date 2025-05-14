@@ -1,5 +1,5 @@
 # core/modification_coordinator.py
-# This is the FULL content for this file, with only the initial plan prompt modified.
+# This is the FULL content for this file, with modifications for the bug fix.
 
 import logging
 import ast
@@ -39,7 +39,9 @@ class ModPhase:
 class ModificationCoordinator(QObject):
     request_llm_call = pyqtSignal(str, list) # backend_id, history_to_send
     file_ready_for_display = pyqtSignal(str, str) # filename, content
-    modification_sequence_complete = pyqtSignal(str) # reason
+    # --- MODIFICATION START: Add original_query to modification_sequence_complete signal ---
+    modification_sequence_complete = pyqtSignal(str, str) # reason, original_query_summary
+    # --- MODIFICATION END ---
     modification_error = pyqtSignal(str) # error_message
     status_update = pyqtSignal(str) # message_for_user_chat
     codeGeneratedAndSummaryNeeded = pyqtSignal(str, str, str)
@@ -116,7 +118,7 @@ class ModificationCoordinator(QObject):
                 self._handle_plan_response(response_text)
             elif self._current_phase == ModPhase.AWAITING_GEMINI_REFINEMENT and backend_id == PLANNER_BACKEND_ID:
                 self._handle_gemini_refinement_response(response_text)
-                return # <<< Your existing fix for Bug 2
+                # return # <<< Your existing fix for Bug 2 (Let's keep it commented as per combined.txt for now)
             elif self._current_phase == ModPhase.AWAITING_CODE_GENERATION and backend_id == GENERATOR_BACKEND_ID:
                 generated_code_str = response_text
                 coder_instructions_str = self._last_refined_instruction_for_generation or "No specific instructions provided."
@@ -186,7 +188,7 @@ class ModificationCoordinator(QObject):
 
     def _request_initial_plan(self):
         logger.debug("MC: Requesting initial plan from planner.")
-        # --- START OF MODIFIED PROMPT ---
+        # --- PROMPT FROM COMBINED.TXT (NO CHANGE HERE) ---
         prompt_text = (
             "You are a file planning assistant. Your sole task is to identify files for modification based on the user's request. "
             "Analyze the following request and context:\n"
@@ -202,7 +204,6 @@ class ModificationCoordinator(QObject):
             "FILES_TO_MODIFY: []\n\n"
             "Provide your response now:"
         )
-        # --- END OF MODIFIED PROMPT ---
         history_for_llm = [ChatMessage(role=USER_ROLE, parts=[prompt_text])]
         self.request_llm_call.emit(PLANNER_BACKEND_ID, history_for_llm)
         self._current_phase = ModPhase.AWAITING_PLAN
@@ -352,8 +353,15 @@ class ModificationCoordinator(QObject):
         logger.info(f"MC: Ending sequence (Reason: {reason}).")
         if error_details:
             logger.error(f"  Error details for sequence end: {error_details}")
-            # self.modification_error.emit(error_details) # Already emitted from other places if it's a parsing error
-        self.modification_sequence_complete.emit(reason)
+
+        # --- MODIFICATION START: Prepare original query summary ---
+        original_query_summary = "User's request" # Default
+        if self._original_query:
+            max_len = 75
+            original_query_summary = (self._original_query[:max_len] + '...') if len(self._original_query) > max_len else self._original_query
+        # --- MODIFICATION END ---
+
+        self.modification_sequence_complete.emit(reason, original_query_summary) # Pass summary
         self._reset_state()
 
     def _reset_state(self):
