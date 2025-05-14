@@ -74,5 +74,5 @@ RAG_NUM_RESULTS = 15
 RAG_MAX_FILE_SIZE_MB = 50
 
 # --- Logging Configuration --- #INFO OR DEBUG
-LOG_LEVEL = "DEBUG"
+LOG_LEVEL = "INFO"
 LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s [%(module)s.%(funcName)s:%(lineno)d] - %(message)s'
