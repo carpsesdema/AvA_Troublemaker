@@ -1,5 +1,4 @@
 # utils/constants.py
-# UPDATED: Added GLOBAL_CONTEXT_DISPLAY_NAME and user's preferred Gemini models
 
 import os
 import sys
@@ -9,13 +8,21 @@ logger = logging.getLogger(__name__)
 
 # --- Core Application Settings ---
 APP_NAME = "SynapseChat"
-APP_VERSION = "3.4-FAISS-Multi" # Or whatever your current version is
+APP_VERSION = "3.4-FAISS-Multi"
 
 # --- API & Model Configuration ---
-# User's preferred preview models
 DEFAULT_GEMINI_CHAT_MODEL = "gemini-2.5-pro-preview-05-06"
 DEFAULT_GEMINI_PLANNER_MODEL = "gemini-2.5-pro-preview-05-06"
-DEFAULT_OLLAMA_MODEL = "codellama:13b" # Default for generator or fallback Ollama chat
+DEFAULT_OLLAMA_MODEL = "codellama:13b"
+DEFAULT_GPT_MODEL = "gpt-4-turbo-preview" # Default GPT model
+
+# --- Backend IDs ---
+# These should be the single source of truth for backend string identifiers
+DEFAULT_CHAT_BACKEND_ID = "gemini_chat_default"
+OLLAMA_CHAT_BACKEND_ID = "ollama_chat"
+GPT_CHAT_BACKEND_ID = "gpt_chat"  # <--- CENTRALIZED
+PLANNER_BACKEND_ID = "gemini_planner"
+GENERATOR_BACKEND_ID = "ollama_generator"
 
 # --- UI Appearance ---
 CHAT_FONT_FAMILY = "SansSerif"
@@ -67,12 +74,12 @@ DEFAULT_IGNORED_DIRS = {
 RAG_DB_PATH_NAME = "faiss_db"
 RAG_COLLECTIONS_PATH = os.path.join(USER_DATA_DIR, RAG_DB_PATH_NAME)
 GLOBAL_COLLECTION_ID = "global_collection"
-GLOBAL_CONTEXT_DISPLAY_NAME = "Knowledge Database" # <-- DEFINED HERE
+GLOBAL_CONTEXT_DISPLAY_NAME = "Knowledge Database"
 RAG_CHUNK_SIZE = 1000
 RAG_CHUNK_OVERLAP = 150
 RAG_NUM_RESULTS = 15
 RAG_MAX_FILE_SIZE_MB = 50
 
 # --- Logging Configuration --- #INFO OR DEBUG
-LOG_LEVEL = "INFO"
+LOG_LEVEL = "DEBUG"
 LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s [%(module)s.%(funcName)s:%(lineno)d] - %(message)s'

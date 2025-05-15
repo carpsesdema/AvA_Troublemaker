@@ -6,95 +6,97 @@ from typing import Dict, Optional
 from backend.interface import BackendInterface
 from backend.gemini_adapter import GeminiAdapter
 from backend.ollama_adapter import OllamaAdapter
+from backend.gpt_adapter import GPTAdapter
+
+# --- Import constants for Backend IDs ---
+from utils.constants import (
+    DEFAULT_CHAT_BACKEND_ID,
+    OLLAMA_CHAT_BACKEND_ID,
+    GPT_CHAT_BACKEND_ID,
+    PLANNER_BACKEND_ID,
+    GENERATOR_BACKEND_ID
+)
+# --- End Import constants ---
 
 # --- Core Components ---
 from core.project_context_manager import ProjectContextManager
 from core.backend_coordinator import BackendCoordinator
 from core.session_flow_manager import SessionFlowManager
-from core.upload_coordinator import UploadCoordinator  # Will receive PSC
+from core.upload_coordinator import UploadCoordinator
 from core.rag_handler import RagHandler
 from core.user_input_processor import UserInputProcessor
-from core.user_input_handler import UserInputHandler  # Will receive PSC
+from core.user_input_handler import UserInputHandler
 
-# Import ModificationHandler and ModificationCoordinator with try-except
 try:
     from core.modification_handler import ModificationHandler
-
     MOD_HANDLER_AVAILABLE = True
 except ImportError as e:
-    ModificationHandler = None  # type: ignore
+    ModificationHandler = None # type: ignore
     MOD_HANDLER_AVAILABLE = False
     logging.error(f"ApplicationOrchestrator: Failed to import ModificationHandler: {e}.")
 
 try:
     from core.modification_coordinator import ModificationCoordinator, ModPhase
-
     MOD_COORDINATOR_AVAILABLE = True
 except ImportError as e:
-    ModificationCoordinator = None  # type: ignore
-    ModPhase = None  # type: ignore
+    ModificationCoordinator = None # type: ignore
+    ModPhase = None # type: ignore
     MOD_COORDINATOR_AVAILABLE = False
     logging.error(f"ApplicationOrchestrator: Failed to import ModificationCoordinator or ModPhase: {e}.")
 
-# --- Imports for Project Summary Feature ---
 try:
     from services.project_intelligence_service import ProjectIntelligenceService
-
     PROJECT_INTEL_SERVICE_AVAILABLE = True
 except ImportError as e:
-    ProjectIntelligenceService = None  # type: ignore
+    ProjectIntelligenceService = None # type: ignore
     PROJECT_INTEL_SERVICE_AVAILABLE = False
     logging.error(f"ApplicationOrchestrator: Failed to import ProjectIntelligenceService: {e}.")
 
 try:
     from core.project_summary_coordinator import ProjectSummaryCoordinator
-
     PROJECT_SUMMARY_COORDINATOR_AVAILABLE = True
 except ImportError as e:
-    ProjectSummaryCoordinator = None  # type: ignore
+    ProjectSummaryCoordinator = None # type: ignore
     PROJECT_SUMMARY_COORDINATOR_AVAILABLE = False
     logging.error(f"ApplicationOrchestrator: Failed to import ProjectSummaryCoordinator: {e}.")
-# --- END Imports ---
-
 
 # --- Services (passed in) ---
 from services.session_service import SessionService
-from services.upload_service import UploadService, VECTOR_DB_SERVICE_AVAILABLE
+from services.upload_service import UploadService # Removed VECTOR_DB_SERVICE_AVAILABLE import here, it's in UploadService
 from services.vector_db_service import VectorDBService
 
 logger = logging.getLogger(__name__)
 
-# --- Backend ID Constants ---
-DEFAULT_CHAT_BACKEND_ID = "gemini_chat_default"
-OLLAMA_CHAT_BACKEND_ID = "ollama_chat"
-PLANNER_BACKEND_ID = "gemini_planner"
-GENERATOR_BACKEND_ID = "ollama_generator"
-
-
-# --- End Backend ID Constants ---
+# Backend ID constants are now imported from utils.constants
 
 class ApplicationOrchestrator:
     def __init__(self, session_service: SessionService, upload_service: UploadService):
         logger.info("ApplicationOrchestrator initializing...")
         self._session_service = session_service
-        self._upload_service = upload_service  # Stored for UploadCoordinator
+        self._upload_service = upload_service
         self._vector_db_service = getattr(upload_service, '_vector_db_service', None)
         if not isinstance(self._vector_db_service, VectorDBService):
-            self._vector_db_service = None  # type: ignore
+            self._vector_db_service = None # type: ignore
             logger.warning("ApplicationOrchestrator: VectorDBService instance not available from UploadService!")
 
         # --- 1. Create Adapters ---
         self.gemini_chat_default_adapter = GeminiAdapter()
         self.ollama_chat_adapter = OllamaAdapter()
+        self.gpt_chat_adapter = GPTAdapter()
         self.gemini_planner_adapter = GeminiAdapter()
         self.ollama_generator_adapter: BackendInterface = self.ollama_chat_adapter
+
         self._all_backend_adapters_dict: Dict[str, BackendInterface] = {
             DEFAULT_CHAT_BACKEND_ID: self.gemini_chat_default_adapter,
             OLLAMA_CHAT_BACKEND_ID: self.ollama_chat_adapter,
+            GPT_CHAT_BACKEND_ID: self.gpt_chat_adapter, # Uses imported constant
             PLANNER_BACKEND_ID: self.gemini_planner_adapter,
             GENERATOR_BACKEND_ID: self.ollama_generator_adapter,
         }
-        logger.debug("Adapters instantiated.")
+        logger.debug(f"Orchestrator: Adapters instantiated. Dict keys: {list(self._all_backend_adapters_dict.keys())}")
+        for key in self._all_backend_adapters_dict.keys():
+            logger.debug(f"Orchestrator: Key '{key}' (type: {type(key)}) present in adapter dict.")
+
 
         # --- 2. Create Core Services & Coordinators (respecting dependencies) ---
         self.project_context_manager = ProjectContextManager()
@@ -104,7 +106,7 @@ class ApplicationOrchestrator:
         logger.debug("BackendCoordinator instantiated.")
 
         self.rag_handler: Optional[RagHandler] = None
-        if self._upload_service and self._vector_db_service:  # Use the instance var for upload_service
+        if self._upload_service and self._vector_db_service:
             self.rag_handler = RagHandler(self._upload_service, self._vector_db_service)
             logger.debug("RagHandler instantiated.")
         else:
@@ -165,7 +167,6 @@ class ApplicationOrchestrator:
             logger.critical(
                 "ApplicationOrchestrator: SessionFlowManager could not be initialized due to missing dependencies.")
 
-        # --- Instantiate ProjectIntelligenceService (before PSC) ---
         self.project_intelligence_service: Optional[ProjectIntelligenceService] = None
         if PROJECT_INTEL_SERVICE_AVAILABLE and ProjectIntelligenceService is not None and self._vector_db_service:
             try:
@@ -179,7 +180,6 @@ class ApplicationOrchestrator:
             logger.warning(
                 "ApplicationOrchestrator: ProjectIntelligenceService cannot be instantiated (VectorDBService or import failed).")
 
-        # --- Instantiate ProjectSummaryCoordinator (before UIH and UC) ---
         self.project_summary_coordinator: Optional[ProjectSummaryCoordinator] = None
         if PROJECT_SUMMARY_COORDINATOR_AVAILABLE and ProjectSummaryCoordinator is not None and \
                 self.project_intelligence_service and self.backend_coordinator and self.project_context_manager:
@@ -197,14 +197,13 @@ class ApplicationOrchestrator:
             logger.warning(
                 "ApplicationOrchestrator: ProjectSummaryCoordinator cannot be instantiated (dependencies or import failed).")
 
-        # --- Instantiate UploadCoordinator (Pass PSC) ---
         self.upload_coordinator: Optional[UploadCoordinator] = None
-        if self._upload_service and self.project_context_manager:  # Use the instance var for upload_service
+        if self._upload_service and self.project_context_manager:
             try:
                 self.upload_coordinator = UploadCoordinator(
                     upload_service=self._upload_service,
                     project_context_manager=self.project_context_manager,
-                    project_summary_coordinator=self.project_summary_coordinator  # Pass PSC
+                    project_summary_coordinator=self.project_summary_coordinator
                 )
                 logger.debug("UploadCoordinator instantiated with ProjectSummaryCoordinator.")
             except Exception as e:
@@ -213,7 +212,6 @@ class ApplicationOrchestrator:
             logger.error(
                 "ApplicationOrchestrator: Cannot initialize UploadCoordinator (UploadService or ProjectContextManager missing).")
 
-        # --- Instantiate UserInputHandler (Pass PSC) ---
         self.user_input_handler: Optional[UserInputHandler] = None
         if self.user_input_processor_instance and self.project_context_manager:
             try:
@@ -221,7 +219,7 @@ class ApplicationOrchestrator:
                     user_input_processor=self.user_input_processor_instance,
                     project_context_manager=self.project_context_manager,
                     modification_coordinator=self.modification_coordinator,
-                    project_summary_coordinator=self.project_summary_coordinator  # Pass PSC
+                    project_summary_coordinator=self.project_summary_coordinator
                 )
                 logger.debug("UserInputHandler instantiated with ProjectSummaryCoordinator.")
             except Exception as e:
@@ -230,9 +228,10 @@ class ApplicationOrchestrator:
             logger.critical(
                 "ApplicationOrchestrator: UserInputHandler cannot be initialized (UserInputProcessor or ProjectContextManager missing).")
 
+
         logger.info("ApplicationOrchestrator core components instantiation process complete.")
 
-    # --- Public Getters (no changes needed to the getters themselves) ---
+    # --- Public Getters ---
     def get_all_backend_adapters_dict(self) -> Dict[str, BackendInterface]:
         return self._all_backend_adapters_dict
 

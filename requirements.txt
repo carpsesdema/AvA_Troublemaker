@@ -1,3 +1,4 @@
+# === requirements.txt ===
 # Core GUI Framework
 PyQt6
 PyQt6-sip
@@ -9,6 +10,7 @@ qasync
 # LLM Client Libraries
 ollama
 google-generativeai
+openai # <-- ADDED
 
 # --- RAG Dependencies ---
 # Vector Database & Search
