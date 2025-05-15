@@ -169,7 +169,10 @@ class DialogService(QObject):
     def show_edit_personality(self) -> Optional[str]:
         logger.debug("DialogService: Showing edit personality dialog.")
         try:
-            current_prompt = self.chat_manager.get_current_personality()
+            # --- THIS IS THE FIX ---
+            # Changed from get_current_personality to get_current_chat_personality
+            current_prompt = self.chat_manager.get_current_chat_personality()
+            # --- END FIX ---
             dialog = EditPersonalityDialog(current_prompt, self.parent_window)
             if dialog.exec() == QDialog.DialogCode.Accepted:
                 return dialog.get_prompt_text()
