@@ -1,4 +1,5 @@
-# === core/chat_manager.py (Part 1/3) ===
+# === core/chat_manager.py ===
+# UPDATED TO FIX AttributeError - Part 1/2
 import logging
 import asyncio
 import os
@@ -169,28 +170,20 @@ class ChatManager(QObject):
         logger.debug(
             f"ChatManager _initialize_state_variables: Initializing state for adapter IDs: {all_backend_ids_from_adapters}")
 
-        # This dictionary stores the currently selected model for *each* backend ID
-        # including DEFAULT_CHAT_BACKEND_ID, OLLAMA_CHAT_BACKEND_ID, GPT_CHAT_BACKEND_ID,
-        # PLANNER_BACKEND_ID, and crucially GENERATOR_BACKEND_ID.
         self._current_model_names: Dict[str, str] = {
             bid: "" for bid in all_backend_ids_from_adapters
         }
-        # Set defaults for Chat-related backends
         if DEFAULT_CHAT_BACKEND_ID in self._current_model_names:
             self._current_model_names[DEFAULT_CHAT_BACKEND_ID] = DEFAULT_GEMINI_CHAT_MODEL
         if OLLAMA_CHAT_BACKEND_ID in self._current_model_names:
-            # This default is for if Ollama is chosen for *chat*.
-            # If you don't have chat models in Ollama, this won't be used often for chat.
             self._current_model_names[OLLAMA_CHAT_BACKEND_ID] = "llama3:latest" # Example chat model
         if GPT_CHAT_BACKEND_ID in self._current_model_names:
             self._current_model_names[GPT_CHAT_BACKEND_ID] = DEFAULT_GPT_MODEL
 
-        # Set defaults for specific purpose backends
         if PLANNER_BACKEND_ID in self._current_model_names:
             self._current_model_names[PLANNER_BACKEND_ID] = DEFAULT_GEMINI_PLANNER_MODEL
         if GENERATOR_BACKEND_ID in self._current_model_names:
-            # This is the default model for the *Specialized LLM* (Generator)
-            self._current_model_names[GENERATOR_BACKEND_ID] = DEFAULT_OLLAMA_MODEL # e.g., "codellama:13b"
+            self._current_model_names[GENERATOR_BACKEND_ID] = DEFAULT_OLLAMA_MODEL
 
         self._current_chat_personality_prompts: Dict[str, Optional[str]] = {
             bid: None for bid in all_backend_ids_from_adapters
@@ -198,8 +191,6 @@ class ChatManager(QObject):
         if PLANNER_BACKEND_ID in self._current_chat_personality_prompts:
             self._current_chat_personality_prompts[
                 PLANNER_BACKEND_ID] = "You are an expert planner and technical writer."
-        # Personality for GENERATOR_BACKEND_ID is often embedded in the prompt by ModificationHandler/Coordinator
-        # But we can set a base one here if desired.
         if GENERATOR_BACKEND_ID in self._current_chat_personality_prompts:
             self._current_chat_personality_prompts[
                 GENERATOR_BACKEND_ID] = "You are an expert Python coding assistant. Your responses must be only code, in a single markdown code block."
@@ -253,14 +244,15 @@ class ChatManager(QObject):
             self._modification_coordinator.modification_sequence_complete.connect(self._handle_mc_sequence_complete)
             self._modification_coordinator.modification_error.connect(self._handle_mc_error)
             self._modification_coordinator.status_update.connect(self._handle_mc_status_update)
-            self._modification_coordinator.codeGeneratedAndSummaryNeeded.connect(
-                self._handle_code_generated_and_summary_needed)
+            # <<< FIX APPLIED HERE: The following line is removed to prevent AttributeError >>>
+            # self._modification_coordinator.codeGeneratedAndSummaryNeeded.connect(
+            #     self._handle_code_generated_and_summary_needed)
         if self._project_summary_coordinator:
             self._project_summary_coordinator.summary_generated.connect(self._handle_project_summary_generated)
             self._project_summary_coordinator.summary_generation_failed.connect(self._handle_project_summary_failed)
             logger.info("ChatManager connected to ProjectSummaryCoordinator output signals.")
         logger.debug("ChatManager component signal connection process finished.")
-# === core/chat_manager.py (Part 2/3) ===
+
     def initialize(self):
         logger.info("ChatManager late initialization process starting...")
         if not (self._session_flow_manager and self._project_context_manager and
@@ -272,25 +264,24 @@ class ChatManager(QObject):
             self.error_occurred.emit(f"Critical error during init ({', '.join(missing_deps)} missing).", True)
             return
 
-        # session_extra_data from SessionService now also includes 'generator_model_name'
         loaded_state = self._session_flow_manager.load_last_session_state_on_startup()
         model_from_session, pers_from_session, proj_data_from_session, active_pid_from_session = None, None, None, constants.GLOBAL_COLLECTION_ID
         active_backend_id_from_session = None
         temperature_from_session = None
-        generator_model_from_session = None # New state variable
+        generator_model_from_session = None
 
-        if loaded_state and len(loaded_state) == 7: # Expecting 7 items now
+        if loaded_state and len(loaded_state) == 7:
             model_from_session, pers_from_session, proj_data_from_session, active_pid_from_session, \
                 active_backend_id_from_session, temperature_from_session, generator_model_from_session = loaded_state
             logger.info(
                 f"CM Init: Loaded full session state (7 items). ActivePID: {active_pid_from_session}, "
                 f"ActiveChatBackend: {active_backend_id_from_session}, GeneratorModel: {generator_model_from_session}")
-        elif loaded_state and len(loaded_state) == 6: # Backward compatibility for 6 items
+        elif loaded_state and len(loaded_state) == 6:
             model_from_session, pers_from_session, proj_data_from_session, active_pid_from_session, \
                 active_backend_id_from_session, temperature_from_session = loaded_state
             logger.warning(
                 "CM Init: Older session format detected (6 items). Generator model will use default.")
-        elif loaded_state and len(loaded_state) >= 4: # Backward compatibility for 4 items
+        elif loaded_state and len(loaded_state) >= 4:
             model_from_session, pers_from_session, proj_data_from_session, active_pid_from_session = loaded_state[:4]
             logger.warning(
                 "CM Init: Very old session format detected (4 items). Active backend, temperature, and generator model will use defaults.")
@@ -299,7 +290,6 @@ class ChatManager(QObject):
                 "CM Init: SessionFlowManager.load_last_session_state_on_startup returned invalid data. Using defaults.")
             active_pid_from_session = constants.GLOBAL_COLLECTION_ID
 
-        # Set Chat AI properties
         if active_backend_id_from_session and active_backend_id_from_session in self._current_model_names:
             self._current_active_chat_backend_id = active_backend_id_from_session
             logger.info(f"Loaded active chat backend ID from session: {self._current_active_chat_backend_id}")
@@ -307,7 +297,7 @@ class ChatManager(QObject):
                 self._current_active_chat_backend_id] = model_from_session
             if pers_from_session: self._current_chat_personality_prompts[
                 self._current_active_chat_backend_id] = pers_from_session
-        elif model_from_session: # Fallback for older sessions if only model_name was present
+        elif model_from_session:
             self._current_model_names[DEFAULT_CHAT_BACKEND_ID] = model_from_session
             if pers_from_session: self._current_chat_personality_prompts[DEFAULT_CHAT_BACKEND_ID] = pers_from_session
 
@@ -315,13 +305,11 @@ class ChatManager(QObject):
             self._current_chat_temperature = temperature_from_session
             logger.info(f"Loaded temperature from session: {self._current_chat_temperature}")
 
-        # Set Generator AI model (Specialized LLM)
         if generator_model_from_session and GENERATOR_BACKEND_ID in self._current_model_names:
             self._current_model_names[GENERATOR_BACKEND_ID] = generator_model_from_session
             logger.info(f"Loaded generator model from session: {generator_model_from_session} for backend {GENERATOR_BACKEND_ID}")
         else:
             logger.info(f"No generator model in session or backend not found, using default: {self._current_model_names.get(GENERATOR_BACKEND_ID)}")
-
 
         if proj_data_from_session:
             self._project_context_manager.load_state(proj_data_from_session)
@@ -330,9 +318,7 @@ class ChatManager(QObject):
 
         self._perform_orphan_cleanup(self._project_context_manager.save_state())
         self._set_initial_active_project(active_pid_from_session, None)
-
-        self._configure_all_initial_backends() # This will now use the loaded generator model too
-
+        self._configure_all_initial_backends()
         self.update_status_based_on_state()
         current_active_project_id = self._project_context_manager.get_active_project_id()
         self._update_rag_initialized_state(emit_status=False, project_id=current_active_project_id)
@@ -348,7 +334,7 @@ class ChatManager(QObject):
         if not (self._project_context_manager and self._vector_db_service): return
         logger.debug("Orphan cleanup check (currently simplified).")
 
-    def _set_initial_active_project(self, target_active_project_id: Optional[str], _): # _ for legacy arg
+    def _set_initial_active_project(self, target_active_project_id: Optional[str], _):
         if not self._project_context_manager: return
         effective_target_id = target_active_project_id if target_active_project_id else constants.GLOBAL_COLLECTION_ID
         if not self._project_context_manager.get_project_history(effective_target_id):
@@ -364,15 +350,14 @@ class ChatManager(QObject):
 
         for backend_id in self._backend_adapters_dict.keys():
             model_to_use = self._current_model_names.get(backend_id)
-
-            if not model_to_use: # Fallback if model name is empty for a known adapter
+            if not model_to_use:
                 if backend_id == DEFAULT_CHAT_BACKEND_ID: model_to_use = DEFAULT_GEMINI_CHAT_MODEL
-                elif backend_id == OLLAMA_CHAT_BACKEND_ID: model_to_use = "llama3:latest" # Example chat default
+                elif backend_id == OLLAMA_CHAT_BACKEND_ID: model_to_use = "llama3:latest"
                 elif backend_id == GPT_CHAT_BACKEND_ID: model_to_use = DEFAULT_GPT_MODEL
                 elif backend_id == PLANNER_BACKEND_ID: model_to_use = DEFAULT_GEMINI_PLANNER_MODEL
-                elif backend_id == GENERATOR_BACKEND_ID: model_to_use = DEFAULT_OLLAMA_MODEL # Specialist default
+                elif backend_id == GENERATOR_BACKEND_ID: model_to_use = DEFAULT_OLLAMA_MODEL
                 else:
-                    logger.warning(f"No default model defined for existing backend_id '{backend_id}'. Configuration might be incomplete.")
+                    logger.warning(f"No default model defined for existing backend_id '{backend_id}'.")
                     model_to_use = "default_model_placeholder"
                 self._current_model_names[backend_id] = model_to_use
 
@@ -380,7 +365,6 @@ class ChatManager(QObject):
             api_key_for_this_backend = None
             if backend_id.startswith("gemini"): api_key_for_this_backend = gemini_api_key
             elif backend_id.startswith("gpt"): api_key_for_this_backend = openai_api_key
-            # Ollama doesn't use an API key in this context
 
             logger.info(
                 f"  Configuring backend '{backend_id}' with model '{model_to_use}' and personality: {'Set' if personality_to_use else 'None'}")
@@ -389,7 +373,6 @@ class ChatManager(QObject):
             )
         logger.info("ChatManager: All initial backend configurations dispatched.")
 
-    # --- NEW METHOD for LeftPanel Chat LLM ComboBox ---
     def get_all_available_chat_models_with_details(self) -> List[Dict[str, Any]]:
         all_models_details = []
         for provider_detail in USER_SELECTABLE_CHAT_BACKEND_DETAILS:
@@ -398,7 +381,6 @@ class ChatManager(QObject):
             if backend_id not in self._backend_adapters_dict:
                 logger.warning(f"Chat backend '{backend_id}' defined in details but no adapter found. Skipping.")
                 continue
-
             try:
                 models_for_backend = self.get_models_for_backend(backend_id)
                 for model_name_from_adapter in models_for_backend:
@@ -412,18 +394,15 @@ class ChatManager(QObject):
         logger.debug(f"CM: get_all_available_chat_models_with_details returning {len(all_models_details)} items.")
         return all_models_details
 
-    # --- NEW METHOD for LeftPanel Specialized LLM ComboBox ---
     def get_all_available_specialized_models_with_details(self) -> List[Dict[str, Any]]:
         all_models_details = []
-        # Currently, GENERATOR_BACKEND_ID is assumed to be Ollama
-        # This could be made more dynamic if other backends are used for generation
-        generator_provider_name = "Ollama (Specialized)" # Or derive from SPECIALIZED_BACKEND_DETAILS
+        generator_provider_name = "Ollama (Specialized)"
         try:
             models_for_generator = self.get_models_for_backend(GENERATOR_BACKEND_ID)
             for model_name_from_adapter in models_for_generator:
                 all_models_details.append({
                     "display_name": f"{generator_provider_name}: {model_name_from_adapter}",
-                    "backend_id": GENERATOR_BACKEND_ID, # This backend_id is for configuration
+                    "backend_id": GENERATOR_BACKEND_ID,
                     "model_name": model_name_from_adapter
                 })
         except Exception as e:
@@ -431,13 +410,9 @@ class ChatManager(QObject):
         logger.debug(f"CM: get_all_available_specialized_models_with_details returning {len(all_models_details)} items.")
         return all_models_details
 
-    # This method is now used by the new flat model dropdown population logic
     def get_available_backend_details(self) -> List[Dict[str, str]]:
-        # This method returns details for CHAT backends, used by the old LCP logic.
-        # For the new flat Chat LLM dropdown, get_all_available_chat_models_with_details is preferred.
-        # However, it can remain for other potential uses or backward compatibility if needed.
         valid_details = []
-        for detail in USER_SELECTABLE_CHAT_BACKEND_DETAILS: # Still refers to chat backends
+        for detail in USER_SELECTABLE_CHAT_BACKEND_DETAILS:
             if detail['id'] in self._backend_adapters_dict:
                 valid_details.append(detail)
             else:
@@ -450,10 +425,8 @@ class ChatManager(QObject):
         if backend_id not in self._backend_adapters_dict:
             logger.error(f"CM: Cannot get models for '{backend_id}': No adapter instance exists for this ID.")
             return self._available_models_per_backend.get(backend_id, [])
-
         if self._backend_coordinator:
             try:
-                # This now correctly fetches models for *any* backend_id, including GENERATOR_BACKEND_ID
                 models = self._backend_coordinator.get_available_models_for_backend(backend_id)
                 self._available_models_per_backend[backend_id] = models[:]
                 logger.debug(f"CM: Fetched {len(models)} models for backend '{backend_id}': {models}")
@@ -465,15 +438,15 @@ class ChatManager(QObject):
         return self._available_models_per_backend.get(backend_id, [])
 
     def get_model_for_backend(self, backend_id: str) -> Optional[str]:
-        # This method now also serves to get the model for GENERATOR_BACKEND_ID
         model = self._current_model_names.get(backend_id)
         logger.debug(f"CM: get_model_for_backend('{backend_id}') returning '{model}'")
         return model
 
     def get_current_active_chat_backend_id(self) -> str:
         logger.debug(f"CM: get_current_active_chat_backend_id returning '{self._current_active_chat_backend_id}'")
-        return self._current_active_chat_backend_id
-
+        return self._current_active_chat_backend_id# === core/chat_manager.py ===
+# UPDATED TO FIX AttributeError - Part 2/2
+    # (Continued from Part 1)
     @pyqtSlot(dict)
     def _handle_pcm_project_list_updated(self, projects_dict: Dict[str, str]):
         self.project_inventory_updated.emit(projects_dict)
@@ -501,7 +474,7 @@ class ChatManager(QObject):
         session_extra_data = proj_ctx_data.pop("session_extra_data_on_load", None)
         active_backend_id_from_session = DEFAULT_CHAT_BACKEND_ID
         temperature_from_session = None
-        generator_model_from_session = None # New for specialized model
+        generator_model_from_session = None
 
         if session_extra_data and isinstance(session_extra_data, dict):
             active_backend_id_from_session = session_extra_data.get("active_chat_backend_id", DEFAULT_CHAT_BACKEND_ID)
@@ -509,14 +482,13 @@ class ChatManager(QObject):
             if temp_val is not None:
                 try: temperature_from_session = float(temp_val)
                 except (ValueError, TypeError): pass
-            generator_model_from_session = session_extra_data.get("generator_model_name") # Load generator model
+            generator_model_from_session = session_extra_data.get("generator_model_name")
 
-        # Configure Chat AI
         if active_backend_id_from_session in self._current_model_names:
             self._current_active_chat_backend_id = active_backend_id_from_session
             self._current_model_names[self._current_active_chat_backend_id] = model_name or self._current_model_names.get(self._current_active_chat_backend_id, "")
             self._current_chat_personality_prompts[self._current_active_chat_backend_id] = personality
-        else: # Fallback for older sessions or unknown backend ID
+        else:
             logger.warning(f"Loaded active_backend_id '{active_backend_id_from_session}' from session is not a known chat backend. Applying to default chat backend.")
             self._current_model_names[DEFAULT_CHAT_BACKEND_ID] = model_name or DEFAULT_GEMINI_CHAT_MODEL
             self._current_chat_personality_prompts[DEFAULT_CHAT_BACKEND_ID] = personality
@@ -525,16 +497,14 @@ class ChatManager(QObject):
         if temperature_from_session is not None:
             self._current_chat_temperature = temperature_from_session
 
-        # Configure Specialized/Generator AI Model
         if generator_model_from_session and GENERATOR_BACKEND_ID in self._current_model_names:
             self._current_model_names[GENERATOR_BACKEND_ID] = generator_model_from_session
             logger.info(f"Loaded generator model '{generator_model_from_session}' for backend {GENERATOR_BACKEND_ID} from session.")
         else:
             logger.info(f"No generator model in session or backend {GENERATOR_BACKEND_ID} not found, will use default.")
 
-
         self._project_context_manager.load_state(proj_ctx_data)
-        self._configure_all_initial_backends() # This will pick up the loaded generator model
+        self._configure_all_initial_backends()
         self.set_current_project(active_pid_from_session)
         self._update_rag_initialized_state(emit_status=True, project_id=active_pid_from_session)
         self.update_status_based_on_state()
@@ -547,12 +517,10 @@ class ChatManager(QObject):
                 history = self._project_context_manager.get_project_history(active_project_id)
                 if history is not None: history.clear()
                 self.history_changed.emit([])
-# === core/chat_manager.py (Part 3/3) ===
+
     @pyqtSlot(str, str, dict, dict)
     def _handle_sfm_request_state_save(self, model_name: str, personality: Optional[str], all_project_data: Dict[str, Any], session_extra_data: Dict[str, Any]):
         if self._session_flow_manager:
-            # session_extra_data already contains active_chat_backend_id and chat_temperature
-            # We ensure generator_model_name is also included before saving
             session_extra_data["generator_model_name"] = self._current_model_names.get(GENERATOR_BACKEND_ID)
             self._session_flow_manager.save_current_session_to_last_state(model_name, personality, session_extra_data)
 
@@ -584,7 +552,7 @@ class ChatManager(QObject):
             if self._modification_coordinator.is_awaiting_llm_response(): mc_is_expecting_this = True
             elif (self._modification_coordinator._current_phase == ModPhase.AWAITING_CODE_GENERATION and backend_id_for_mc == GENERATOR_BACKEND_ID): mc_is_expecting_this = True
             elif (self._modification_coordinator._current_phase == ModPhase.AWAITING_PLAN and backend_id_for_mc == PLANNER_BACKEND_ID): mc_is_expecting_this = True
-            elif (self._modification_coordinator._current_phase == ModPhase.AWAITING_GEMINI_REFINEMENT and backend_id_for_mc == PLANNER_BACKEND_ID): mc_is_expecting_this = True
+            elif (self._modification_coordinator._current_phase == ModPhase.AWAITING_GEMINI_REFINEMENT and backend_id_for_mc == PLANNER_BACKEND_ID): mc_is_expecting_this = True # Assuming AWAITING_GEMINI_REFINEMENT is a valid phase
             if mc_is_expecting_this: logger.info(f"CM: Routing completed LLM response for req_id '{request_id}' (Purpose: {purpose}) to MC."); self._modification_coordinator.process_llm_response(backend_id_for_mc or PLANNER_BACKEND_ID, completed_message); return
             else: logger.warning(f"CM: Response for req_id '{request_id}' has MC purpose ('{purpose}') but MC is not in a matching await state (Phase: {self._modification_coordinator._current_phase}, AwaitingLLM: {self._modification_coordinator.is_awaiting_llm_response()}). This response will NOT be displayed in chat."); return
         original_target_filename = usage_stats_with_metadata.get("original_target_filename")
@@ -633,7 +601,6 @@ class ChatManager(QObject):
         logger.error(f"CM: Received ERROR from BC for request_id '{request_id}': {error_message_str}")
         is_psc_related_error = False
         if self._project_summary_coordinator:
-            # Check if the request_id matches those tracked by PSC
             if hasattr(self._project_summary_coordinator, '_current_request_id_tech_summary') and \
                self._project_summary_coordinator._current_request_id_tech_summary == request_id:
                 is_psc_related_error = True
@@ -642,22 +609,17 @@ class ChatManager(QObject):
                 is_psc_related_error = True
 
         if is_psc_related_error:
-            logger.info(f"CM: Error for req_id '{request_id}' belongs to ProjectSummaryCoordinator. It will handle or has handled it via direct BC signal connection.")
-            # PSC connects directly to BC.response_error, so it should handle its own errors.
-            # We just need to make sure the UI doesn't show a duplicate/confusing error.
-            # The stream_finished signal ensures loading indicators stop.
+            logger.info(f"CM: Error for req_id '{request_id}' belongs to ProjectSummaryCoordinator.")
             self.stream_finished.emit()
             return
 
         is_mc_related_error = False
         if self._modification_coordinator and self._modification_coordinator.is_active():
-             # Check if the request_id looks like one generated by MC
-             # (e.g., starts with "mc_") or if MC is in a state expecting a response.
-             if request_id.startswith("mc_"): # A simple check, MC might need more robust tracking
+             if request_id.startswith("mc_"):
                  is_mc_related_error = True
 
         if is_mc_related_error:
-            logger.info(f"CM: Error for req_id '{request_id}' appears to be for ModificationCoordinator. MC will handle via direct BC signal.")
+            logger.info(f"CM: Error for req_id '{request_id}' appears to be for ModificationCoordinator.")
             self.stream_finished.emit()
             return
 
@@ -668,11 +630,11 @@ class ChatManager(QObject):
                 for i, msg_in_history in enumerate(reversed(active_history)):
                     if msg_in_history.id == request_id and msg_in_history.role == MODEL_ROLE:
                         logger.debug(f"CM: Found placeholder message ID '{request_id}' to update with error info.")
-                        msg_in_history.role = ERROR_ROLE; msg_in_history.parts = [f"Backend Error (Request ID: {request_id[:8]}...): {error_message_str}"]; msg_in_history.loading_state = MessageLoadingState.COMPLETED # Or .ERROR
+                        msg_in_history.role = ERROR_ROLE; msg_in_history.parts = [f"Backend Error (Request ID: {request_id[:8]}...): {error_message_str}"]; msg_in_history.loading_state = MessageLoadingState.COMPLETED
                         self.new_message_added.emit(msg_in_history); message_updated_in_model = True; break
             if not message_updated_in_model:
                 logger.warning(f"CM: Error for req_id '{request_id}', but no placeholder found. Adding new error message.")
-                err_obj = ChatMessage(id=request_id, role=ERROR_ROLE, parts=[f"Backend Error (Request ID: {request_id[:8]}...): {error_message_str}"], loading_state=MessageLoadingState.COMPLETED) # Or .ERROR
+                err_obj = ChatMessage(id=request_id, role=ERROR_ROLE, parts=[f"Backend Error (Request ID: {request_id[:8]}...): {error_message_str}"], loading_state=MessageLoadingState.COMPLETED)
                 self._project_context_manager.add_message_to_active_project(err_obj); self.new_message_added.emit(err_obj)
             self._trigger_save_last_session_state()
         self.stream_finished.emit(); self.error_occurred.emit(f"Backend Error: {error_message_str}", False); return
@@ -688,7 +650,7 @@ class ChatManager(QObject):
             f"CM: BC config changed for '{backend_id}'. Model: {model_name}, ConfigOK: {is_configured}, Avail: {len(available_models)}")
         self._chat_backend_configured_successfully[backend_id] = is_configured
         self._available_models_per_backend[backend_id] = available_models[:]
-        self._current_model_names[backend_id] = model_name # Ensure our state matches what BC configured
+        self._current_model_names[backend_id] = model_name
 
         if not is_configured and self._backend_coordinator:
             err = self._backend_coordinator.get_last_error_for_backend(backend_id) or f"{backend_id} config error."
@@ -696,21 +658,16 @@ class ChatManager(QObject):
 
         self.available_models_changed_for_backend.emit(backend_id, self._available_models_per_backend.get(backend_id, []))
         personality_active = bool(self._current_chat_personality_prompts.get(backend_id))
-        # This signal is now generic; LeftPanel will decide if it's for chat or specialized LLM
         self.backend_config_state_changed.emit(backend_id, model_name, is_configured, personality_active)
 
         if backend_id == self._current_active_chat_backend_id: self.update_status_based_on_state()
-        elif backend_id in [PLANNER_BACKEND_ID, GENERATOR_BACKEND_ID]: # Non-chat backends status
-            name_map = {PLANNER_BACKEND_ID: "Planner", GENERATOR_BACKEND_ID: "Specialized"} # Updated name
+        elif backend_id in [PLANNER_BACKEND_ID, GENERATOR_BACKEND_ID]:
+            name_map = {PLANNER_BACKEND_ID: "Planner", GENERATOR_BACKEND_ID: "Specialized"}
             d_name = name_map.get(backend_id, backend_id)
             status_color = "#98c379" if is_configured else "#e06c75"
             status_msg = f"{d_name} ({backend_id}) OK with {model_name}." if is_configured else f"{d_name} ({backend_id}) not configured ({model_name})."
             self.status_update.emit(status_msg, status_color, True, 3000 if is_configured else 5000)
         self._trigger_save_last_session_state()
-
-    # ... (Upload and UIH handlers remain the same as they don't directly depend on the specifics of the two comboboxes,
-    #      but rather on the configured active_chat_backend_id and GENERATOR_BACKEND_ID) ...
-    # Omitting _handle_upload_... and _handle_uih_... for brevity here, assume they are unchanged from combined.txt
 
     @pyqtSlot(bool, str)
     def _handle_upload_started(self, is_global: bool, item_description: str):
@@ -772,7 +729,7 @@ class ChatManager(QObject):
         self._backend_coordinator.request_response_stream(
             target_backend_id=self._current_active_chat_backend_id,
             request_id=ai_request_id,
-            history_to_send=full_history_for_backend[:-1], # Exclude AI placeholder
+            history_to_send=full_history_for_backend[:-1],
             is_modification_response_expected=False,
             options=request_options,
             request_metadata=request_metadata_for_bc
@@ -788,7 +745,7 @@ class ChatManager(QObject):
         self._trigger_save_last_session_state(); logger.debug(f"CM: Added user's modification request (ID: {user_chat_message_for_ui.id}) to history for UI display.")
         QApplication.processEvents()
         if self._modification_handler_instance: self._modification_handler_instance.activate_sequence()
-        self._modification_coordinator.start_sequence(query=original_query_text, context=context_for_mc, focus_prefix=focus_prefix_for_mc)
+        self._modification_coordinator.start_sequence(query=original_query_text, context_from_rag=context_for_mc, focus_prefix=focus_prefix_for_mc) # Corrected param name
         logger.info(f"CM: ModificationCoordinator sequence started for query: '{original_query_text[:50]}...'")
 
     @pyqtSlot(str, str)
@@ -812,9 +769,6 @@ class ChatManager(QObject):
         self._project_context_manager.add_message_to_active_project(user_message); self.new_message_added.emit(user_message)
         self._trigger_save_last_session_state()
 
-
-    # --- MC, PSC Handlers (Assume unchanged unless direct impact from model selection change) ---
-    # Omitting _handle_mc_... and _handle_project_summary_... for brevity, assume they are unchanged from combined.txt
     @pyqtSlot(str, list)
     def _handle_mc_request_llm_call(self, target_backend_id: str, history_to_send: List[ChatMessage]):
         if self._backend_coordinator:
@@ -831,6 +785,8 @@ class ChatManager(QObject):
         logger.info(f"CM: Summary needed for '{target_filename}'. Delegating to CodeSummaryService.")
         if not (self._code_summary_service and self._backend_coordinator): self.error_occurred.emit(f"Internal error: Services unavailable for summary of '{target_filename}'.", True); return
         self.status_update.emit(f"Ava is preparing summary for '{target_filename}'...", "#e5c07b", True, 4000)
+        # This is where the actual call to CodeSummaryService happens
+        # If codeGeneratedAndSummaryNeeded is not defined in ModificationCoordinator, this slot is never called.
         success = self._code_summary_service.request_code_summary(self._backend_coordinator, target_filename, coder_instructions, generated_code)
         if not success:
             err_msg = f"Failed to dispatch summary request for '{target_filename}'."; logger.error(err_msg)
@@ -956,51 +912,40 @@ class ChatManager(QObject):
             active_chat_backend_id = self._current_active_chat_backend_id
             active_chat_model = self._current_model_names.get(active_chat_backend_id)
             active_chat_pers = self._current_chat_personality_prompts.get(active_chat_backend_id)
-
-            # Prepare session_extra_data
             session_extra_data = {
                 "active_chat_backend_id": active_chat_backend_id,
                 "chat_temperature": self._current_chat_temperature,
-                "generator_model_name": self._current_model_names.get(GENERATOR_BACKEND_ID) # Save specialized model
-                # Add other specific backend model selections here if they become configurable (e.g., planner)
+                "generator_model_name": self._current_model_names.get(GENERATOR_BACKEND_ID)
             }
-            # Remove None values from session_extra_data to keep saved file clean
             session_extra_data = {k: v for k, v in session_extra_data.items() if v is not None}
-
             self._session_flow_manager.save_current_session_to_last_state(active_chat_model, active_chat_pers, session_extra_data)
 
-    def get_current_chat_model(self) -> str: # Gets model for ACTIVE CHAT backend
+    def get_current_chat_model(self) -> str:
         return self._current_model_names.get(self._current_active_chat_backend_id, "Unknown Model")
-    def get_current_chat_personality(self) -> Optional[str]: # Gets personality for ACTIVE CHAT backend
+    def get_current_chat_personality(self) -> Optional[str]:
         return self._current_chat_personality_prompts.get(self._current_active_chat_backend_id)
 
     def set_active_chat_backend(self, backend_id: str):
-        # This method is now solely for setting the CHAT backend.
-        # The specialized/generator backend model is set via set_model_for_backend(GENERATOR_BACKEND_ID, ...)
-        if backend_id not in self._current_model_names: # Should check against USER_SELECTABLE_CHAT_BACKEND_DETAILS
+        if backend_id not in self._current_model_names:
             is_valid_chat_backend = any(detail["id"] == backend_id for detail in USER_SELECTABLE_CHAT_BACKEND_DETAILS)
             if not is_valid_chat_backend:
                 logger.error(f"Attempted to set unknown/non-chat backend_id '{backend_id}' as active chat backend.")
                 self.error_occurred.emit(f"Invalid chat backend type selected: {backend_id}", False)
                 return
-
         if self._current_active_chat_backend_id != backend_id:
             logger.info(f"Switching active CHAT backend from '{self._current_active_chat_backend_id}' to '{backend_id}'.")
             self._current_active_chat_backend_id = backend_id
-            # Ensure the newly active chat backend is configured with its currently selected model & personality
-            model_to_ensure = self._current_model_names.get(backend_id, "") # Get its current model setting
+            model_to_ensure = self._current_model_names.get(backend_id, "")
             pers_to_ensure = self._current_chat_personality_prompts.get(backend_id)
             api_key_to_use = None
             if backend_id.startswith("gemini"): api_key_to_use = get_gemini_api_key()
             elif backend_id.startswith("gpt"): api_key_to_use = get_openai_api_key()
-
             if self._backend_coordinator:
                 self._backend_coordinator.configure_backend(backend_id, api_key_to_use, model_to_ensure, pers_to_ensure)
             self.update_status_based_on_state()
             self._trigger_save_last_session_state()
 
     def set_model_for_backend(self, backend_id: str, model_name: str):
-        # This method can now be used for ANY backend_id, including GENERATOR_BACKEND_ID.
         if backend_id not in self._current_model_names:
             logger.error(f"Cannot set model for unknown backend_id: {backend_id}")
             self.error_occurred.emit(f"Cannot set model for invalid backend: {backend_id}", False)
@@ -1009,19 +954,16 @@ class ChatManager(QObject):
             logger.error(f"Cannot set empty model name for backend_id: {backend_id}")
             self.error_occurred.emit(f"Model name cannot be empty for backend: {backend_id}", False)
             return
-
         logger.info(f"Setting model for backend '{backend_id}' to '{model_name}'.")
         self._current_model_names[backend_id] = model_name
         api_key_to_use = None
         if backend_id.startswith("gemini"): api_key_to_use = get_gemini_api_key()
         elif backend_id.startswith("gpt"): api_key_to_use = get_openai_api_key()
-
         if self._backend_coordinator:
             self._backend_coordinator.configure_backend(
                 backend_id, api_key_to_use, model_name,
-                self._current_chat_personality_prompts.get(backend_id) # Use existing personality for this backend
+                self._current_chat_personality_prompts.get(backend_id)
             )
-        # If the backend_id is the currently active chat backend, update status
         if backend_id == self._current_active_chat_backend_id:
              self.update_status_based_on_state()
         self._trigger_save_last_session_state()
@@ -1031,31 +973,28 @@ class ChatManager(QObject):
             logger.error(f"Cannot set personality for unknown backend_id: {backend_id}")
             self.error_occurred.emit(f"Cannot set personality for invalid backend: {backend_id}", False)
             return
-
         new_prompt_val = prompt.strip() if prompt else None
         logger.info(f"Setting personality for backend '{backend_id}'. New prompt: {'Set' if new_prompt_val else 'None'}")
         self._current_chat_personality_prompts[backend_id] = new_prompt_val
         api_key_to_use = None
         if backend_id.startswith("gemini"): api_key_to_use = get_gemini_api_key()
         elif backend_id.startswith("gpt"): api_key_to_use = get_openai_api_key()
-
         if self._backend_coordinator:
             self._backend_coordinator.configure_backend(
                 backend_id, api_key_to_use,
-                self._current_model_names.get(backend_id, ""), # Use current model for this backend
+                self._current_model_names.get(backend_id, ""),
                 new_prompt_val
             )
-        # If the backend_id is the currently active chat backend, update status
         if backend_id == self._current_active_chat_backend_id:
              self.update_status_based_on_state()
         self._trigger_save_last_session_state()
 
     def set_model(self, model_name: str): # DEPRECATED
-        logger.warning("DEPRECATED ChatManager.set_model() called. Use set_model_for_backend(active_chat_backend_id, model_name) instead.")
+        logger.warning("DEPRECATED ChatManager.set_model() called.")
         self.set_model_for_backend(self._current_active_chat_backend_id, model_name)
 
     def set_personality(self, prompt: Optional[str]): # DEPRECATED
-        logger.warning("DEPRECATED ChatManager.set_personality() called. Use set_personality_for_backend(active_chat_backend_id, prompt) instead.")
+        logger.warning("DEPRECATED ChatManager.set_personality() called.")
         self.set_personality_for_backend(self._current_active_chat_backend_id, prompt)
 
     def set_current_project(self, project_id: str):
@@ -1083,7 +1022,6 @@ class ChatManager(QObject):
 
     def load_chat_session(self, filepath: str):
         if self._session_flow_manager:
-            # Pass current active chat backend as a default if session doesn't specify one.
             self._session_flow_manager.load_named_session(filepath, self._current_active_chat_backend_id)
 
     def save_current_chat_session(self, filepath: str) -> bool:
@@ -1117,11 +1055,9 @@ class ChatManager(QObject):
     def update_status_based_on_state(self):
         active_backend_is_ready = self._chat_backend_configured_successfully.get(self._current_active_chat_backend_id, False)
         active_backend_display_name = self._current_active_chat_backend_id
-        # Find display name for the active CHAT backend
-        for detail in USER_SELECTABLE_CHAT_BACKEND_DETAILS: # Iterate CHAT backend details
+        for detail in USER_SELECTABLE_CHAT_BACKEND_DETAILS:
             if detail['id'] == self._current_active_chat_backend_id:
                 active_backend_display_name = detail['name']; break
-
         if not active_backend_is_ready:
             err_msg = f"API Not Configured ({active_backend_display_name})"
             if self._backend_coordinator:
@@ -1144,7 +1080,7 @@ class ChatManager(QObject):
     def set_chat_temperature(self, temperature: float):
         if 0.0 <= temperature <= 2.0:
             self._current_chat_temperature = temperature
-            active_backend_display_name = self._current_active_chat_backend_id # Name of the active CHAT backend
+            active_backend_display_name = self._current_active_chat_backend_id
             for detail in USER_SELECTABLE_CHAT_BACKEND_DETAILS:
                 if detail['id'] == self._current_active_chat_backend_id:
                     active_backend_display_name = detail['name']; break
@@ -1175,7 +1111,5 @@ class ChatManager(QObject):
             self.busy_state_changed.emit(self._overall_busy)
             self.update_status_based_on_state()
 
-    def is_api_ready(self) -> bool: # Helper for MainWindow to check general readiness OF CHAT API
+    def is_api_ready(self) -> bool:
         return self._chat_backend_configured_successfully.get(self._current_active_chat_backend_id, False)
-
-# --- End of Part 3/3 ---

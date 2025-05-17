@@ -28,10 +28,8 @@ except ImportError as e:
 
 logger = logging.getLogger(__name__)
 
-# Threshold for automatically triggering a project summary after upload
-# For example, if more than 5 new files are successfully processed for a project's RAG.
-AUTO_SUMMARY_TRIGGER_THRESHOLD_FILES = 5
-
+# The AUTO_SUMMARY_TRIGGER_THRESHOLD_FILES constant logic has been removed.
+# If this was its only use, the constant can be removed from utils/constants.py.
 
 class UploadCoordinator(QObject):
     upload_started = pyqtSignal(bool, str)
@@ -39,12 +37,10 @@ class UploadCoordinator(QObject):
     upload_error = pyqtSignal(str)
     busy_state_changed = pyqtSignal(bool)
 
-    # No new signal needed here to request summary, it will call PSC directly
-
     def __init__(self,
                  upload_service: UploadService,
                  project_context_manager: ProjectContextManager,
-                 project_summary_coordinator: Optional['ProjectSummaryCoordinator'],  # Added
+                 project_summary_coordinator: Optional['ProjectSummaryCoordinator'], # Remains for manual summary
                  parent: Optional[QObject] = None):
         super().__init__(parent)
         if not upload_service:
@@ -54,14 +50,14 @@ class UploadCoordinator(QObject):
 
         self._upload_service = upload_service
         self._project_context_manager = project_context_manager
-        self._project_summary_coordinator = project_summary_coordinator  # Store it
+        self._project_summary_coordinator = project_summary_coordinator # Keep for manual summary
         self._current_upload_task: Optional[asyncio.Task] = None
         self._is_busy: bool = False
 
         if self._project_summary_coordinator:
-            logger.info("UploadCoordinator initialized with ProjectSummaryCoordinator.")
+            logger.info("UploadCoordinator initialized with ProjectSummaryCoordinator (for manual summaries).")
         else:
-            logger.warning("UploadCoordinator initialized WITHOUT ProjectSummaryCoordinator. Auto-summary disabled.")
+            logger.warning("UploadCoordinator initialized WITHOUT ProjectSummaryCoordinator. Manual summary command will not function.")
         logger.info("UploadCoordinator initialized.")
 
     def _set_busy(self, busy: bool):
@@ -74,55 +70,20 @@ class UploadCoordinator(QObject):
             self,
             upload_func: Callable[[], Optional[ChatMessage]],
             operation_description: str,
-            target_collection_id: Optional[str] = None,  # To know which project was affected
-            num_items_for_upload: int = 0  # Number of files/items in this specific upload operation
+            target_collection_id: Optional[str] = None, # Still useful for logging/context
+            num_items_for_upload: int = 0 # Still useful for logging/context
     ):
         logger.info(f"UploadCoordinator: Starting async task for: {operation_description}")
         summary_message: Optional[ChatMessage] = None
-        rag_processing_successful_for_some_items = False
+        # The logic for rag_processing_successful_for_some_items and files_added_count
+        # specifically for triggering automatic summaries has been removed.
 
         try:
             # This summary_message is the RAG processing summary from UploadService
             summary_message = await asyncio.to_thread(upload_func)
-            if summary_message and summary_message.role != ERROR_ROLE:
-                # Check metadata for how many files were actually added successfully
-                # (UploadService's summary_message should ideally contain this info)
-                files_added_count = 0
-                if summary_message.metadata and "upload_summary" in summary_message.metadata:
-                    # Example: "upload_summary": "5/7 processed to DB..."
-                    try:
-                        match = re.search(r"(\d+)/\d+ processed to DB", str(summary_message.metadata["upload_summary"]))
-                        if match:
-                            files_added_count = int(match.group(1))
-                    except Exception:
-                        pass  # Ignore parsing errors for this
 
-                if files_added_count > 0:
-                    rag_processing_successful_for_some_items = True
-
-                # --- Trigger Project Summary if conditions met ---
-                if target_collection_id and target_collection_id != constants.GLOBAL_COLLECTION_ID and \
-                        rag_processing_successful_for_some_items and self._project_summary_coordinator:
-
-                    # Heuristic: Trigger if a significant number of files were added in this batch
-                    if files_added_count >= AUTO_SUMMARY_TRIGGER_THRESHOLD_FILES:
-                        logger.info(
-                            f"Upload to project '{target_collection_id}' added {files_added_count} files (>= threshold {AUTO_SUMMARY_TRIGGER_THRESHOLD_FILES}). "
-                            f"Requesting project summary via ProjectSummaryCoordinator.")
-                        try:
-                            # Use QTimer to ensure this call happens on the main thread if PSC has Qt affinity
-                            # or if PSC might interact with UI-related components indirectly.
-                            # For now, direct call as PSC is a QObject but its work is mostly backend.
-                            QTimer.singleShot(0, lambda: self._project_summary_coordinator.generate_project_summary(
-                                target_collection_id))
-                        except Exception as e_psc_call:
-                            logger.error(
-                                f"Error trying to trigger project summary for '{target_collection_id}': {e_psc_call}")
-                    else:
-                        logger.info(
-                            f"Upload to project '{target_collection_id}' added {files_added_count} files (< threshold {AUTO_SUMMARY_TRIGGER_THRESHOLD_FILES}). "
-                            f"Automatic project summary not triggered.")
-                # --- End Trigger Project Summary ---
+            # <<< THE ENTIRE AUTOMATIC PROJECT SUMMARY TRIGGER BLOCK HAS BEEN DELETED >>>
+            # No conditions checked here to call self._project_summary_coordinator.generate_project_summary
 
         except asyncio.CancelledError:
             logger.info(f"Upload task '{operation_description}' cancelled by request.")
@@ -137,7 +98,7 @@ class UploadCoordinator(QObject):
             if self._current_upload_task is asyncio.current_task():
                 self._current_upload_task = None
             self._set_busy(False)
-            if summary_message:  # This is the RAG processing summary
+            if summary_message:  # This is the RAG processing summary from UploadService
                 self.upload_summary_received.emit(summary_message)
             logger.info(f"UploadCoordinator: Async task for '{operation_description}' finished.")
 
@@ -146,8 +107,8 @@ class UploadCoordinator(QObject):
                          description: str,
                          is_global: bool,
                          item_info: str,
-                         target_collection_id_for_summary: Optional[str] = None,  # Pass the project ID
-                         num_items_for_upload: int = 0
+                         target_collection_id_for_summary: Optional[str] = None, # Keep for context
+                         num_items_for_upload: int = 0 # Keep for context
                          ):
         if self._is_busy:
             logger.warning("UploadCoordinator is already busy. Ignoring new upload request.")
@@ -187,11 +148,6 @@ class UploadCoordinator(QObject):
         active_project_id = self._project_context_manager.get_active_project_id() or constants.GLOBAL_COLLECTION_ID
         dir_name = os.path.basename(dir_path)
         logger.info(f"UploadCoordinator: Request to upload directory '{dir_name}' to project '{active_project_id}'.")
-
-        # Note: To get num_items_for_upload for a directory, we'd ideally scan it first.
-        # For simplicity, we'll pass 0 and let UploadService determine actual count for summary trigger.
-        # Or, UploadService can provide the count in its summary_message.
-        # Let's assume UploadService's summary message will contain enough info to gauge significance.
         upload_callable = lambda: self._upload_service.process_directory_for_context(dir_path,
                                                                                      collection_id=active_project_id)
         description = f"uploading directory '{dir_name}' to '{active_project_id}'"
@@ -201,7 +157,7 @@ class UploadCoordinator(QObject):
             is_global=(active_project_id == constants.GLOBAL_COLLECTION_ID),
             item_info=f"directory '{dir_name}'",
             target_collection_id_for_summary=active_project_id,
-            num_items_for_upload=1  # Treat directory as one "item" for this high-level count
+            num_items_for_upload=1
         )
 
     def upload_files_to_global(self, file_paths: List[str]):
@@ -215,7 +171,7 @@ class UploadCoordinator(QObject):
             description,
             is_global=True,
             item_info=f"{len(file_paths)} file(s)",
-            target_collection_id_for_summary=constants.GLOBAL_COLLECTION_ID,  # Global summaries might not be desired
+            target_collection_id_for_summary=constants.GLOBAL_COLLECTION_ID,
             num_items_for_upload=len(file_paths)
         )
 
