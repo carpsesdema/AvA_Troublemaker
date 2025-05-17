@@ -21,9 +21,9 @@ except ImportError as e:
     ModificationHandler = type("ModificationHandler", (object,), {})
     BackendCoordinator = type("BackendCoordinator", (object,), {})
     ProjectContextManager = type("ProjectContextManager", (object,), {})
-    ChatMessage = type("ChatMessage", (object,), {})
-    constants = type("constants", (object,), {}) # Add a fallback for constants
-    USER_ROLE, SYSTEM_ROLE, ERROR_ROLE = "user", "system", "error"
+    ChatMessage = type("ChatMessage", (object,), {}) # type: ignore
+    constants = type("constants", (object,), {}) # Add a fallback for constants # type: ignore
+    USER_ROLE, SYSTEM_ROLE, ERROR_ROLE = "user", "system", "error" # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -112,17 +112,15 @@ class ModificationCoordinator(QObject):
         if self._handler:
             self._handler.cancel_modification() # Ensure handler is also reset
 
-    # <<< FIX APPLIED HERE: is_active() method added >>>
     def is_active(self) -> bool:
         """Returns True if a modification sequence is currently active."""
         return self._is_active
-    # <<< END FIX >>>
 
     def is_awaiting_llm_response(self) -> bool:
         """Returns True if the coordinator is active and awaiting an LLM response."""
         return self._is_active and self._is_awaiting_llm
 
-    def start_sequence(self, query: str, context_from_rag: str, focus_prefix: str): # Parameter name was context_from_rag
+    def start_sequence(self, query: str, context_from_rag: str, focus_prefix: str):
         if self._is_active:
             logger.warning("MC: start_sequence called while active. Resetting previous sequence.")
             self._reset_state()
@@ -232,19 +230,21 @@ class ModificationCoordinator(QObject):
         if self._original_focus_prefix and os.path.isdir(self._original_focus_prefix):
             norm_relative_path = relative_filename.lstrip('/').lstrip('\\')
             full_path = os.path.normpath(os.path.join(self._original_focus_prefix, norm_relative_path))
-        elif os.path.isabs(relative_filename):
+        elif os.path.isabs(relative_filename): # If AI gives absolute path (less ideal)
             full_path = relative_filename
+            logger.warning(f"MC: Planner provided an absolute path '{relative_filename}'. Prefer relative paths from focus_prefix.")
+
 
         if full_path and os.path.exists(full_path) and os.path.isfile(full_path):
             try:
                 with open(full_path, 'r', encoding='utf-8') as f:
                     content = f.read()
-                logger.info(f"MC: Internally read original content for '{relative_filename}'.")
+                logger.info(f"MC: Internally read original content for '{relative_filename}' from '{full_path}'.")
             except Exception as e:
                 logger.error(f"MC: Failed to read original content of '{relative_filename}' from '{full_path}': {e}")
                 self.status_update.emit(f"[System Warning: Could not read content of `{relative_filename}`. Assuming new file or using plan only.]")
         else:
-            logger.info(f"MC: Original file '{relative_filename}' not found. Treating as new.")
+            logger.info(f"MC: Original file '{relative_filename}' not found (resolved to '{full_path}'). Treating as new.")
             self.status_update.emit(f"[System Note: File `{relative_filename}` appears to be new.]")
         return content
 
@@ -299,18 +299,21 @@ class ModificationCoordinator(QObject):
             )
 
         if original_file_content_for_context:
-            max_orig_context_for_planner_prompt = 4000
+            max_orig_context_for_planner_prompt = 4000 # Or some other reasonable limit
             display_orig_content = original_file_content_for_context
             if len(original_file_content_for_context) > max_orig_context_for_planner_prompt:
                 display_orig_content = original_file_content_for_context[:max_orig_context_for_planner_prompt] + \
                                        "\n... [Original Content Truncated for this Planner Instruction] ..."
             prompt_for_planner += (
                 f"CONTEXT: The original content of `{target_filename_for_generator}` (if it exists) is:\n"
-                f"```python\n{display_orig_content}\n```\n\n"
+                # Determine language for syntax highlighting in prompt (basic heuristic)
+                # This is for the prompt *to the planner*, not the final coder prompt's markdown label.
+                f"```{'python' if target_filename_for_generator.endswith('.py') else ''}\n{display_orig_content}\n```\n\n"
             )
         else:
             prompt_for_planner += f"CONTEXT: The file `{target_filename_for_generator}` is new and should be created from scratch.\n\n"
 
+        # --- BEGIN MODIFIED SECTION ---
         prompt_for_planner += (
             f"YOUR TASK: Generate the complete and precise instruction text that will be sent *directly* to the code generation LLM. "
             f"This instruction MUST guide the Coder AI to produce the FULL and correct code for the *entire* file `{target_filename_for_generator}`.\n"
@@ -320,9 +323,12 @@ class ModificationCoordinator(QObject):
             f"3. If updating, explicitly include the *complete original content* of `{target_filename_for_generator}` within the instruction for the Coder AI, clearly marked (e.g., inside a specific code block like ```python_original\\n...\\n```). Emphasize preserving unchanged parts perfectly.\n"
             f"4. If creating a new file, state this clearly.\n"
             f"5. If refining based on user feedback, clearly address the feedback and integrate it with previous instructions/context.\n"
-            f"6. Remind the Coder AI that its response MUST be ONLY a single standard Markdown fenced code block, labeled with the exact filename `{target_filename_for_generator}` (e.g., ```python {target_filename_for_generator}\\n...\\n```). NO other text, explanations, or summaries.\n\n"
+            f"6. Remind the Coder AI that its response MUST be ONLY a single standard Markdown fenced code block. This block MUST be labeled with the programming language followed by the exact filename `{target_filename_for_generator}` (e.g., ```python {target_filename_for_generator}\\n...\\n``` or ```javascript {target_filename_for_generator}\\n...\\n```). "
+            f"**CRITICAL EMPHASIS: The Coder AI's response must contain NO other text, no explanations, no summaries, no greetings, no apologies, no conversational elements whatsoever, neither before nor after this single required code block.** "
+            f"The Coder AI's entire response must be ONLY the code block itself, starting with ```<language> {target_filename_for_generator} and ending with ```.\n\n"
             f"OUTPUT ONLY THE INSTRUCTION TEXT FOR THE CODER AI. Do not add any conversational preamble or explanation of your own."
         )
+        # --- END MODIFIED SECTION ---
 
         history_for_llm = [ChatMessage(role=USER_ROLE, parts=[prompt_for_planner])]
         self._is_awaiting_llm = True
@@ -351,11 +357,11 @@ class ModificationCoordinator(QObject):
         self._current_phase = ModPhase.AWAITING_CODE_GENERATION
         self.request_llm_call.emit(GENERATOR_BACKEND_ID, history_for_llm)
 
-    def process_llm_response(self, backend_id: str, response_message: ChatMessage):
+    def process_llm_response(self, backend_id: str, response_message: ChatMessage): # response_message is ChatMessage
         if not self._is_active or not self._is_awaiting_llm:
             logger.warning(f"MC: process_llm_response from '{backend_id}' called when not active/awaiting. Phase: {self._current_phase}")
             return
-        logger.info(f"MC: Processing LLM response from '{backend_id}' during phase '{self._current_phase}'.")
+        logger.info(f"MC: Processing LLM response from '{backend_id}' during phase '{self._current_phase}'. ID: {response_message.id}")
         response_text = response_message.text.strip()
 
         try:
@@ -364,7 +370,9 @@ class ModificationCoordinator(QObject):
             elif self._current_phase == ModPhase.AWAITING_GENERATOR_PROMPT_REFINEMENT and backend_id == PLANNER_BACKEND_ID:
                 self._handle_planner_refined_generator_prompt(response_text)
             elif self._current_phase == ModPhase.AWAITING_CODE_GENERATION and backend_id == GENERATOR_BACKEND_ID:
-                self._handle_coder_ai_code_response(response_text)
+                # <<< MODIFICATION START: Pass response_message to _handle_coder_ai_code_response >>>
+                self._handle_coder_ai_code_response(response_text, response_message)
+                # <<< MODIFICATION END >>>
             else:
                 self._is_awaiting_llm = False
                 err_msg = f"Unexpected LLM response from '{backend_id}' for phase {self._current_phase}."
@@ -375,17 +383,28 @@ class ModificationCoordinator(QObject):
             logger.exception(f"MC: Error processing LLM response from '{backend_id}': {e}")
             self._handle_sequence_end("error_processing_llm_response", f"Error processing {backend_id} response: {e}")
 
-    def _handle_coder_ai_code_response(self, generated_code_text: str):
-        logger.info(f"MC: Handling Coder AI's response for code file '{self._current_target_filename}'.")
+    # <<< MODIFICATION START: Update signature and add flagging logic >>>
+    def _handle_coder_ai_code_response(self, generated_code_text: str, coder_response_message: ChatMessage):
+    # <<< MODIFICATION END >>>
+        logger.info(f"MC: Handling Coder AI's response for code file '{self._current_target_filename}'. Message ID: {coder_response_message.id}")
         self._is_awaiting_llm = False
         if not self._current_target_filename:
             self._handle_sequence_end("error_internal_state", "MC Error: Missing target filename during code generation response.")
             return
 
         if self._handler.process_llm_code_generation_response(generated_code_text, self._current_target_filename):
-            parsed_filename_content_tuple = self._handler.get_last_emitted_filename_and_content() # Requires MH to implement this
+            parsed_filename_content_tuple = self._handler.get_last_emitted_filename_and_content()
             if parsed_filename_content_tuple and parsed_filename_content_tuple[0] == self._current_target_filename:
                 actual_filename, actual_content = parsed_filename_content_tuple
+
+                # <<< MODIFICATION START: Flag the ChatMessage object >>>
+                if coder_response_message.metadata is None:
+                    coder_response_message.metadata = {}
+                coder_response_message.metadata["code_block_processed_by_mc"] = True
+                coder_response_message.metadata["original_filename_for_viewer"] = actual_filename
+                logger.info(f"MC: Flagged ChatMessage ID {coder_response_message.id} as processed by MC for '{actual_filename}'")
+                # <<< MODIFICATION END >>>
+
                 self.file_ready_for_display.emit(actual_filename, actual_content)
                 self.status_update.emit(f"[System: Code for `{self._current_target_filename}` received. Review in Code Viewer and provide feedback or type 'next'.]")
                 self._current_phase = ModPhase.AWAITING_USER_CONFIRMATION
@@ -393,7 +412,7 @@ class ModificationCoordinator(QObject):
                 mismatch_info = f"Expected '{self._current_target_filename}', MH provided '{parsed_filename_content_tuple[0] if parsed_filename_content_tuple else 'None'}'."
                 logger.error(f"MC: Internal Mismatch after MH parsing. {mismatch_info}")
                 self.status_update.emit(f"[System Warning: Issue processing Coder AI output for `{self._current_target_filename}`. {mismatch_info} Check logs. You can try 'refine' or 'next'.]")
-                self._current_phase = ModPhase.AWAITING_USER_CONFIRMATION # Allow user to try to recover
+                self._current_phase = ModPhase.AWAITING_USER_CONFIRMATION
         # If process_llm_code_generation_response returns False, _handle_mh_parsing_error will be triggered by MH signal
 
     def process_user_input(self, user_command: str):
@@ -426,10 +445,14 @@ class ModificationCoordinator(QObject):
                     self.modification_error.emit(f"Internal error: Missing plan details for refining '{self._current_target_filename}'.")
                     return
 
+                # Assert types for mypy before lambda
+                assert self._current_target_filename is not None
+                assert self._current_plan_segment_for_file is not None
+
                 QTimer.singleShot(0, lambda: self._request_generator_prompt_from_planner(
-                    target_filename_for_generator=self._current_target_filename, # type: ignore # Checked above
+                    target_filename_for_generator=self._current_target_filename, # type: ignore
                     original_file_content_for_context=self._current_original_file_content_for_ai,
-                    plan_segment_for_this_file=self._current_plan_segment_for_file, # type: ignore # Checked above
+                    plan_segment_for_this_file=self._current_plan_segment_for_file, # type: ignore
                     user_feedback_for_refinement=self._user_feedback_for_current_file
                 ))
         else:
@@ -450,19 +473,18 @@ class ModificationCoordinator(QObject):
         list_str_start = marker_pos + len(marker)
         potential_list_str = response_text[list_str_start:].strip()
         first_line_after_marker = potential_list_str.split('\n', 1)[0].strip()
-        list_match = re.search(r"(\[.*?\])", first_line_after_marker) # Try to find list in first line
+        list_match = re.search(r"(\[.*?\])", first_line_after_marker)
         if list_match:
             list_str_for_eval = list_match.group(1)
         elif first_line_after_marker.startswith('[') and first_line_after_marker.endswith(']'):
-            list_str_for_eval = first_line_after_marker # Assume whole line is the list
+            list_str_for_eval = first_line_after_marker
         else:
             return None, "FILES_TO_MODIFY list not found or not correctly formatted with brackets on the first line after the marker."
         try:
             parsed_list = ast.literal_eval(list_str_for_eval)
             if not isinstance(parsed_list, list):
                 return None, "Parsed data for FILES_TO_MODIFY is not a list."
-            # Normalize paths and remove empty strings
-            cleaned_list = [str(f).strip().replace("\\", "/") for f in parsed_list if isinstance(f, (str, int, float))] # Allow numbers if AI mistakenly adds them
+            cleaned_list = [str(f).strip().replace("\\", "/") for f in parsed_list if isinstance(f, (str, int, float))]
             return [f_item for f_item in cleaned_list if f_item], None
         except (ValueError, SyntaxError, TypeError) as e:
             return None, f"Error parsing FILES_TO_MODIFY list string '{list_str_for_eval}': {e}"
@@ -485,10 +507,8 @@ class ModificationCoordinator(QObject):
         self._reset_state()
 
     def _complete_sequence_if_done(self):
-        # This is called when _proceed_to_next_file_step determines there are no more files
         if self._current_file_index >= len(self._planned_files_list) and self._planned_files_list:
             self.status_update.emit("[System: All planned files have been processed.]")
             self._handle_sequence_end("completed", "All planned files processed.")
-        elif not self._planned_files_list and self._current_phase != ModPhase.AWAITING_PLAN: # If plan was empty from start
-            # This case should be handled by _handle_plan_response if list is empty
+        elif not self._planned_files_list and self._current_phase != ModPhase.AWAITING_PLAN:
             pass

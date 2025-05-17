@@ -506,7 +506,14 @@ class MainWindow(QWidget):
         except Exception:
             logger.exception("Error updating window title:"); self.setWindowTitle(constants.APP_NAME)
 
+    # <<< MODIFICATION START: Add flag check to _scan_message_for_code_blocks >>>
     def _scan_message_for_code_blocks(self, message: ChatMessage):
+        if message.metadata and message.metadata.get("code_block_processed_by_mc"):
+            original_file = message.metadata.get("original_filename_for_viewer", "an already processed file")
+            logger.debug(f"MW Code Scan: Skipping message ID {message.id} (role: {message.role}) - already processed by MC for '{original_file}'.")
+            return
+    # <<< MODIFICATION END >>>
+
         if not (self.dialog_service and hasattr(self.dialog_service, '_code_viewer_window') and \
                 (viewer_instance := self.dialog_service._code_viewer_window)): return
         if (message.metadata and message.metadata.get("is_internal", False)) or not message.text: return
