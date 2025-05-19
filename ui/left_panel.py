@@ -45,8 +45,9 @@ class LeftControlPanel(QWidget):
     TEMP_SLIDER_MAX = 200
     TEMP_PRECISION_FACTOR = 100.0
 
-    # UserData role for the new comboboxes
-    MODEL_CONFIG_DATA_ROLE = Qt.ItemDataRole.UserRole + 2 # For {"backend_id": ..., "model_name": ...}
+    # UserData role for the new comboboxes - KEEPING THIS DEFINITION
+    # but we'll use the default UserRole for QComboBox.addItem's userData parameter
+    MODEL_CONFIG_DATA_ROLE = Qt.ItemDataRole.UserRole + 2
 
     def __init__(self, chat_manager, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -56,7 +57,7 @@ class LeftControlPanel(QWidget):
         self._active_project_id_in_lcp: str = GLOBAL_COLLECTION_ID
         self._is_programmatic_selection: bool = False
         self._is_programmatic_temp_change: bool = False
-        self._is_programmatic_model_change: bool = False # General flag for model combobox changes
+        self._is_programmatic_model_change: bool = False
         self._projects_inventory: Dict[str, str] = {}
         self.project_item_tree_icon = load_icon("new_folder_icon.svg")
         self.global_context_tree_icon = QIcon()
@@ -64,8 +65,8 @@ class LeftControlPanel(QWidget):
         self._init_widgets()
         self._init_layout()
         self._connect_signals()
-        self.set_temperature_ui(0.7) # Default, ChatManager will update it on init
-        self._load_initial_model_settings() # Load initial settings
+        self.set_temperature_ui(0.7)
+        self._load_initial_model_settings()
 
     def _get_qta_icon(self, icon_name: str, color: str = "#00CFE8") -> QIcon:
         if QTAWESOME_AVAILABLE:
@@ -178,23 +179,21 @@ class LeftControlPanel(QWidget):
         self.configure_ai_personality_button.setStyleSheet(button_style_sheet);
         self.configure_ai_personality_button.setIconSize(button_icon_size)
 
-        # --- RENAMED UI ELEMENTS FOR LLM SELECTION ---
-        self.chat_llm_label = QLabel("Chat LLM:") # Was provider_label
+        self.chat_llm_label = QLabel("Chat LLM:")
         self.chat_llm_label.setFont(self.button_font)
-        self.chat_llm_combo_box = QComboBox() # Was provider_combo_box
+        self.chat_llm_combo_box = QComboBox()
         self.chat_llm_combo_box.setFont(self.button_font)
         self.chat_llm_combo_box.setObjectName("ChatLlmComboBox")
         self.chat_llm_combo_box.setToolTip("Select the main AI for chat conversations")
         self.chat_llm_combo_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
-        self.specialized_llm_label = QLabel("Specialized LLM:") # Was model_label
+        self.specialized_llm_label = QLabel("Specialized LLM:")
         self.specialized_llm_label.setFont(self.button_font)
-        self.specialized_llm_combo_box = QComboBox() # Was model_combo_box
+        self.specialized_llm_combo_box = QComboBox()
         self.specialized_llm_combo_box.setFont(self.button_font)
         self.specialized_llm_combo_box.setObjectName("SpecializedLlmComboBox")
         self.specialized_llm_combo_box.setToolTip("Select the AI for specialized tasks (e.g., code generation)")
         self.specialized_llm_combo_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        # --- END RENAMED UI ELEMENTS ---
 
         self.temperature_label = QLabel("Temperature:")
         self.temperature_label.setFont(self.button_font)
@@ -246,12 +245,10 @@ class LeftControlPanel(QWidget):
         tools_settings_group_layout.setSpacing(5)
         tools_settings_group_layout.addWidget(self.view_code_blocks_button)
         tools_settings_group_layout.addWidget(self.configure_ai_personality_button)
-        # --- UPDATED LAYOUT FOR LLM SELECTION ---
         tools_settings_group_layout.addWidget(self.chat_llm_label)
         tools_settings_group_layout.addWidget(self.chat_llm_combo_box)
         tools_settings_group_layout.addWidget(self.specialized_llm_label)
         tools_settings_group_layout.addWidget(self.specialized_llm_combo_box)
-        # --- END UPDATED LAYOUT ---
         temp_layout = QHBoxLayout()
         temp_layout.addWidget(self.temperature_label)
         temp_layout.addWidget(self.temperature_slider, 1)
@@ -273,10 +270,8 @@ class LeftControlPanel(QWidget):
         self.view_code_blocks_button.clicked.connect(self.viewCodeBlocksClicked)
         self.configure_ai_personality_button.clicked.connect(self.editPersonalityClicked)
 
-        # --- UPDATED SIGNAL CONNECTIONS ---
         self.chat_llm_combo_box.currentIndexChanged.connect(self._on_chat_llm_selected)
         self.specialized_llm_combo_box.currentIndexChanged.connect(self._on_specialized_llm_selected)
-        # --- END UPDATED SIGNAL CONNECTIONS ---
 
         self.temperature_slider.valueChanged.connect(self._on_slider_temp_changed)
         self.temperature_spinbox.valueChanged.connect(self._on_spinbox_temp_changed)
@@ -297,17 +292,18 @@ class LeftControlPanel(QWidget):
 
     def _load_initial_model_settings(self):
         logger.debug("LeftPanel: Loading initial model settings from ChatManager.")
-        self._is_programmatic_model_change = True # Use a general flag for all model UI changes
+        self._is_programmatic_model_change = True
 
-        # Populate Chat LLM ComboBox
+        self.chat_llm_combo_box.blockSignals(True)
         self._populate_chat_llm_combo_box()
+        self.chat_llm_combo_box.blockSignals(False)
         active_chat_backend_id = self.chat_manager.get_current_active_chat_backend_id()
         active_chat_model_name = self.chat_manager.get_model_for_backend(active_chat_backend_id)
         self._set_combo_box_selection(self.chat_llm_combo_box, active_chat_backend_id, active_chat_model_name)
 
-        # Populate Specialized LLM ComboBox
+        self.specialized_llm_combo_box.blockSignals(True)
         self._populate_specialized_llm_combo_box()
-        # Assuming GENERATOR_BACKEND_ID is the fixed ID for specialized models for now
+        self.specialized_llm_combo_box.blockSignals(False)
         active_specialized_model_name = self.chat_manager.get_model_for_backend(GENERATOR_BACKEND_ID)
         self._set_combo_box_selection(self.specialized_llm_combo_box, GENERATOR_BACKEND_ID, active_specialized_model_name)
 
@@ -315,12 +311,12 @@ class LeftControlPanel(QWidget):
         logger.debug("LeftPanel: Initial model settings loaded.")
 
     def _set_combo_box_selection(self, combo_box: QComboBox, target_backend_id: str, target_model_name: Optional[str]):
-        """Helper to set the selection for a flat model combobox."""
-        if target_model_name is None: # If no model is specifically set for the backend yet
+        if target_model_name is None:
             if combo_box.count() > 0:
-                combo_box.setCurrentIndex(0) # Select the first available
-                # And inform ChatManager of this default selection
-                new_selection_data = combo_box.currentData(self.MODEL_CONFIG_DATA_ROLE)
+                combo_box.setCurrentIndex(0)
+                # VVVV Use default Qt.ItemDataRole.UserRole VVVV
+                new_selection_data = combo_box.currentData() # Or combo_box.currentData(Qt.ItemDataRole.UserRole)
+                # ^^^^ End Change ^^^^
                 if new_selection_data and isinstance(new_selection_data, dict):
                     if combo_box == self.chat_llm_combo_box:
                         self.chat_manager.set_active_chat_backend(new_selection_data["backend_id"])
@@ -330,22 +326,23 @@ class LeftControlPanel(QWidget):
             return
 
         for i in range(combo_box.count()):
-            item_data = combo_box.itemData(i, self.MODEL_CONFIG_DATA_ROLE)
+            # VVVV Use default Qt.ItemDataRole.UserRole VVVV
+            item_data = combo_box.itemData(i) # Or combo_box.itemData(i, Qt.ItemDataRole.UserRole)
+            # ^^^^ End Change ^^^^
             if isinstance(item_data, dict) and \
                item_data.get("backend_id") == target_backend_id and \
                item_data.get("model_name") == target_model_name:
                 if combo_box.currentIndex() != i:
                     combo_box.setCurrentIndex(i)
                 return
-        # If the exact backend/model combo wasn't found, select the first item
         if combo_box.count() > 0:
             combo_box.setCurrentIndex(0)
             logger.warning(f"Could not find '{target_backend_id}':'{target_model_name}' in {combo_box.objectName()}. Selecting first available.")
-            # Potentially update ChatManager with this new default if necessary
-            new_selection_data = combo_box.currentData(self.MODEL_CONFIG_DATA_ROLE)
+            # VVVV Use default Qt.ItemDataRole.UserRole VVVV
+            new_selection_data = combo_box.currentData()
+            # ^^^^ End Change ^^^^
             if new_selection_data and isinstance(new_selection_data, dict):
                 if combo_box == self.chat_llm_combo_box:
-                     # Check if the backend_id is different or the model for the same backend_id is different
                      if self.chat_manager.get_current_active_chat_backend_id() != new_selection_data["backend_id"] or \
                         self.chat_manager.get_model_for_backend(new_selection_data["backend_id"]) != new_selection_data["model_name"]:
                          self.chat_manager.set_active_chat_backend(new_selection_data["backend_id"])
@@ -359,11 +356,10 @@ class LeftControlPanel(QWidget):
         self.chat_llm_combo_box.blockSignals(True)
         self.chat_llm_combo_box.clear()
         try:
-            # This method in ChatManager needs to be created/updated
             models_details = self.chat_manager.get_all_available_chat_models_with_details()
             if models_details:
                 for detail in models_details:
-                    self.chat_llm_combo_box.addItem(detail['display_name'], userData=detail) # Store the whole dict
+                    self.chat_llm_combo_box.addItem(detail['display_name'], userData=detail)
                 self.chat_llm_combo_box.setEnabled(True)
             else:
                 self.chat_llm_combo_box.addItem("No Chat LLMs Available")
@@ -378,7 +374,6 @@ class LeftControlPanel(QWidget):
         self.specialized_llm_combo_box.blockSignals(True)
         self.specialized_llm_combo_box.clear()
         try:
-            # This method in ChatManager needs to be created/updated
             models_details = self.chat_manager.get_all_available_specialized_models_with_details()
             if models_details:
                 for detail in models_details:
@@ -395,37 +390,52 @@ class LeftControlPanel(QWidget):
 
 
     @pyqtSlot(int)
-    def _on_chat_llm_selected(self, index: int): # Was _on_provider_selected
+    def _on_chat_llm_selected(self, index: int):
         if self._is_programmatic_model_change or index < 0:
             return
-        selected_data = self.chat_llm_combo_box.itemData(index, self.MODEL_CONFIG_DATA_ROLE)
+
+        # VVVV Use default Qt.ItemDataRole.UserRole VVVV
+        selected_data = self.chat_llm_combo_box.itemData(index) # Or itemData(index, Qt.ItemDataRole.UserRole)
+        # ^^^^ End Change ^^^^
+
+        if selected_data is None:
+            logger.warning(f"Chat LLM selection changed to index {index}, but itemData is None. "
+                           f"Text: '{self.chat_llm_combo_box.itemText(index)}'. Ignoring.")
+            return
+
         if isinstance(selected_data, dict) and "backend_id" in selected_data and "model_name" in selected_data:
             backend_id = selected_data["backend_id"]
             model_name = selected_data["model_name"]
             display_name = self.chat_llm_combo_box.itemText(index)
             logger.info(f"LeftPanel: Chat LLM selected: '{display_name}' (Backend: {backend_id}, Model: {model_name})")
 
-            # Set both backend and model for that backend
             self.chat_manager.set_active_chat_backend(backend_id)
             self.chat_manager.set_model_for_backend(backend_id, model_name)
         else:
-            logger.warning(f"Chat LLM selection changed to an item with invalid data: {selected_data}")
+            logger.warning(f"Chat LLM selection changed to an item with invalid data structure: {selected_data}")
 
     @pyqtSlot(int)
-    def _on_specialized_llm_selected(self, index: int): # Was _on_model_selected
+    def _on_specialized_llm_selected(self, index: int):
         if self._is_programmatic_model_change or index < 0:
             return
-        selected_data = self.specialized_llm_combo_box.itemData(index, self.MODEL_CONFIG_DATA_ROLE)
+
+        # VVVV Use default Qt.ItemDataRole.UserRole VVVV
+        selected_data = self.specialized_llm_combo_box.itemData(index) # Or itemData(index, Qt.ItemDataRole.UserRole)
+        # ^^^^ End Change ^^^^
+
+        if selected_data is None:
+            logger.warning(f"Specialized LLM selection changed to index {index}, but itemData is None. "
+                           f"Text: '{self.specialized_llm_combo_box.itemText(index)}'. Ignoring.")
+            return
+
         if isinstance(selected_data, dict) and "backend_id" in selected_data and "model_name" in selected_data:
-            # For specialized LLM, the backend_id from userData is likely GENERATOR_BACKEND_ID
-            # but we use the constant to be sure we are configuring the correct one.
             model_name = selected_data["model_name"]
             display_name = self.specialized_llm_combo_box.itemText(index)
             logger.info(f"LeftPanel: Specialized LLM selected: '{display_name}' (Model: {model_name} for Generator Backend)")
 
             self.chat_manager.set_model_for_backend(GENERATOR_BACKEND_ID, model_name)
         else:
-            logger.warning(f"Specialized LLM selection changed to an item with invalid data: {selected_data}")
+            logger.warning(f"Specialized LLM selection changed to an item with invalid data structure: {selected_data}")
 
 
     @pyqtSlot(str, str, bool, bool)
@@ -436,32 +446,32 @@ class LeftControlPanel(QWidget):
         active_chat_backend_id = self.chat_manager.get_current_active_chat_backend_id()
         active_chat_model_name = self.chat_manager.get_model_for_backend(active_chat_backend_id)
 
-        # If the changed backend is the active chat backend, or if the model list for it might change
         if backend_id == active_chat_backend_id:
-            self._populate_chat_llm_combo_box() # Repopulate to reflect any new models or status
+            self.chat_llm_combo_box.blockSignals(True)
+            self._populate_chat_llm_combo_box()
+            self.chat_llm_combo_box.blockSignals(False)
             self._set_combo_box_selection(self.chat_llm_combo_box, active_chat_backend_id, active_chat_model_name)
             self.update_personality_tooltip(personality_is_active)
 
-        # If the changed backend is the generator backend
         if backend_id == GENERATOR_BACKEND_ID:
             active_generator_model_name = self.chat_manager.get_model_for_backend(GENERATOR_BACKEND_ID)
+            self.specialized_llm_combo_box.blockSignals(True)
             self._populate_specialized_llm_combo_box()
+            self.specialized_llm_combo_box.blockSignals(False)
             self._set_combo_box_selection(self.specialized_llm_combo_box, GENERATOR_BACKEND_ID, active_generator_model_name)
 
-        # If an unrelated backend config changes, it might not affect the current selections,
-        # but we re-check current selections to be safe.
-        current_chat_llm_data = self.chat_llm_combo_box.currentData(self.MODEL_CONFIG_DATA_ROLE)
-        if current_chat_llm_data:
-             if current_chat_llm_data.get("backend_id") != active_chat_backend_id or \
-                current_chat_llm_data.get("model_name") != active_chat_model_name:
-                 self._set_combo_box_selection(self.chat_llm_combo_box, active_chat_backend_id, active_chat_model_name)
+        # VVVV Use default Qt.ItemDataRole.UserRole VVVV
+        current_chat_llm_data = self.chat_llm_combo_box.currentData()
+        # ^^^^ End Change ^^^^
+        if current_chat_llm_data and (current_chat_llm_data.get("backend_id") != active_chat_backend_id or current_chat_llm_data.get("model_name") != active_chat_model_name):
+             self._set_combo_box_selection(self.chat_llm_combo_box, active_chat_backend_id, active_chat_model_name)
 
-        current_spec_llm_data = self.specialized_llm_combo_box.currentData(self.MODEL_CONFIG_DATA_ROLE)
-        active_generator_model_name = self.chat_manager.get_model_for_backend(GENERATOR_BACKEND_ID)
-        if current_spec_llm_data:
-            if current_spec_llm_data.get("backend_id") != GENERATOR_BACKEND_ID or \
-               current_spec_llm_data.get("model_name") != active_generator_model_name:
-                self._set_combo_box_selection(self.specialized_llm_combo_box, GENERATOR_BACKEND_ID, active_generator_model_name)
+        # VVVV Use default Qt.ItemDataRole.UserRole VVVV
+        current_spec_llm_data = self.specialized_llm_combo_box.currentData()
+        # ^^^^ End Change ^^^^
+        active_generator_model_name_check = self.chat_manager.get_model_for_backend(GENERATOR_BACKEND_ID)
+        if current_spec_llm_data and (current_spec_llm_data.get("backend_id") != GENERATOR_BACKEND_ID or current_spec_llm_data.get("model_name") != active_generator_model_name_check):
+            self._set_combo_box_selection(self.specialized_llm_combo_box, GENERATOR_BACKEND_ID, active_generator_model_name_check)
 
         self._is_programmatic_model_change = False
 
@@ -470,23 +480,25 @@ class LeftControlPanel(QWidget):
     def _handle_chat_manager_models_update(self, backend_id: str, models: List[str]):
         logger.debug(f"LCP: Received model list update from CM for backend '{backend_id}'. Models: {models}")
         self._is_programmatic_model_change = True
-        # Determine if this update affects the chat LLM or specialized LLM combobox
         active_chat_backend_id = self.chat_manager.get_current_active_chat_backend_id()
 
         if backend_id == active_chat_backend_id:
             logger.debug(f"Updating Chat LLM combo box due to model list change for active backend '{backend_id}'")
             current_model_name = self.chat_manager.get_model_for_backend(backend_id)
+            self.chat_llm_combo_box.blockSignals(True)
             self._populate_chat_llm_combo_box()
+            self.chat_llm_combo_box.blockSignals(False)
             self._set_combo_box_selection(self.chat_llm_combo_box, backend_id, current_model_name)
 
         if backend_id == GENERATOR_BACKEND_ID:
             logger.debug(f"Updating Specialized LLM combo box due to model list change for generator backend '{backend_id}'")
             current_model_name = self.chat_manager.get_model_for_backend(backend_id)
+            self.specialized_llm_combo_box.blockSignals(True)
             self._populate_specialized_llm_combo_box()
+            self.specialized_llm_combo_box.blockSignals(False)
             self._set_combo_box_selection(self.specialized_llm_combo_box, backend_id, current_model_name)
         self._is_programmatic_model_change = False
 
-    # Temperature and Project Tree methods remain largely the same
     @pyqtSlot(int)
     def _on_slider_temp_changed(self, slider_value: int):
         if self._is_programmatic_temp_change: return
@@ -582,8 +594,8 @@ class LeftControlPanel(QWidget):
         self.manage_chats_button.setEnabled(effective_enabled)
         self.configure_ai_personality_button.setEnabled(effective_enabled)
 
-        self.chat_llm_combo_box.setEnabled(enabled) # Main enable state
-        self.specialized_llm_combo_box.setEnabled(enabled) # Main enable state
+        self.chat_llm_combo_box.setEnabled(enabled)
+        self.specialized_llm_combo_box.setEnabled(enabled)
 
         self.chat_llm_label.setStyleSheet(f"QLabel {{ color: {'#CCCCCC' if enabled else '#777777'}; }}")
         self.specialized_llm_label.setStyleSheet(f"QLabel {{ color: {'#CCCCCC' if enabled else '#777777'}; }}")
@@ -600,5 +612,5 @@ class LeftControlPanel(QWidget):
 
     def update_personality_tooltip(self, active: bool):
         tooltip_base = "Customize the AI's personality and system prompt (Ctrl+P)"
-        status = "(Custom Persona Active)" if active else "(Default Persona)" # Changed wording
+        status = "(Custom Persona Active)" if active else "(Default Persona)"
         self.configure_ai_personality_button.setToolTip(f"{tooltip_base}\nStatus: {status}")

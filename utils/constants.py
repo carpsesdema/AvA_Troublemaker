@@ -78,7 +78,7 @@ RAG_NUM_RESULTS = 15 # Or your preferred number of RAG results
 RAG_MAX_FILE_SIZE_MB = 50
 
 # --- Logging Configuration ---
-LOG_LEVEL = "INFO" # Or "INFO" for less verbose logs
+LOG_LEVEL = "DEBUG" # Or "INFO" for less verbose logs
 LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s [%(module)s.%(funcName)s:%(lineno)d] - %(message)s'
 
 # --- REMOVED AUTO_SUMMARY_TRIGGER_THRESHOLD_FILES ---

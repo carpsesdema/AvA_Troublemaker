@@ -1,6 +1,6 @@
 # core/modification_coordinator.py
 import logging
-import ast # For parsing FILES_TO_MODIFY list
+import ast  # For parsing FILES_TO_MODIFY list
 import re  # For parsing plan segments
 import os  # For file operations
 
@@ -18,12 +18,12 @@ try:
 except ImportError as e:
     logging.critical(f"ModificationCoordinator: Failed to import core components: {e}")
     # Define fallback types for type hinting and basic script operation
-    ModificationHandler = type("ModificationHandler", (object,), {}) # type: ignore
-    BackendCoordinator = type("BackendCoordinator", (object,), {}) # type: ignore
-    ProjectContextManager = type("ProjectContextManager", (object,), {}) # type: ignore
-    ChatMessage = type("ChatMessage", (object,), {}) # type: ignore
-    constants = type("constants", (object,), {}) # type: ignore
-    USER_ROLE, SYSTEM_ROLE, ERROR_ROLE = "user", "system", "error" # type: ignore
+    ModificationHandler = type("ModificationHandler", (object,), {})  # type: ignore
+    BackendCoordinator = type("BackendCoordinator", (object,), {})  # type: ignore
+    ProjectContextManager = type("ProjectContextManager", (object,), {})  # type: ignore
+    ChatMessage = type("ChatMessage", (object,), {})  # type: ignore
+    constants = type("constants", (object,), {})  # type: ignore
+    USER_ROLE, SYSTEM_ROLE, ERROR_ROLE = "user", "system", "error"  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -31,23 +31,23 @@ logger = logging.getLogger(__name__)
 PLANNER_BACKEND_ID = getattr(constants, "PLANNER_BACKEND_ID", "gemini_planner")
 GENERATOR_BACKEND_ID = getattr(constants, "GENERATOR_BACKEND_ID", "ollama_generator")
 
-class ModPhase: # State machine phases
+
+class ModPhase:  # State machine phases
     IDLE = "IDLE"
-    AWAITING_PLAN = "AWAITING_PLAN" # Waiting for the overall plan from Planner AI
-    AWAITING_GENERATOR_PROMPT_REFINEMENT = "AWAITING_GENERATOR_PROMPT_REFINEMENT" # Waiting for Planner AI to create/refine prompt for Generator AI
-    AWAITING_CODE_GENERATION = "AWAITING_CODE_GENERATION" # Waiting for Generator AI to produce code
-    # REMOVED: AWAITING_USER_CONFIRMATION_FOR_CURRENT_FILE
-    ALL_FILES_GENERATED_AWAITING_USER_ACTION = "ALL_FILES_GENERATED_AWAITING_USER_ACTION" # All files generated, user can give overall feedback or accept
+    AWAITING_PLAN = "AWAITING_PLAN"
+    AWAITING_GENERATOR_PROMPT_REFINEMENT = "AWAITING_GENERATOR_PROMPT_REFINEMENT"
+    AWAITING_CODE_GENERATION = "AWAITING_CODE_GENERATION"
+    ALL_FILES_GENERATED_AWAITING_USER_ACTION = "ALL_FILES_GENERATED_AWAITING_USER_ACTION"
+
 
 class ModificationCoordinator(QObject):
-    # Signals to ChatManager/MainWindow
-    request_llm_call = pyqtSignal(str, list)  # backend_id, history_to_send
-    file_ready_for_display = pyqtSignal(str, str) # filename, content (AI-generated full content)
-    modification_sequence_complete = pyqtSignal(str, str) # reason, original_query_summary
-    modification_error = pyqtSignal(str)      # error_message (for UI error display)
-    status_update = pyqtSignal(str)           # General status message for chat UI
+    request_llm_call = pyqtSignal(str, list)
+    file_ready_for_display = pyqtSignal(str, str)
+    modification_sequence_complete = pyqtSignal(str, str)
+    modification_error = pyqtSignal(str)
+    status_update = pyqtSignal(str)
 
-    MAX_LINES_BEFORE_SPLIT = 400 # Constant for splitting large files
+    MAX_LINES_BEFORE_SPLIT = 400
 
     def __init__(self,
                  modification_handler: ModificationHandler,
@@ -67,27 +67,18 @@ class ModificationCoordinator(QObject):
         self._is_active: bool = False
         self._is_awaiting_llm: bool = False
         self._current_phase: str = ModPhase.IDLE
-
-        # Information about the overall modification request
-        self._original_query: Optional[str] = None # Holds current user intent (initial or overall refinement feedback)
-        self._original_query_at_start: Optional[str] = None # Holds the very first user query for context
+        self._original_query: Optional[str] = None
+        self._original_query_at_start: Optional[str] = None
         self._original_context_from_rag: Optional[str] = None
         self._original_focus_prefix: Optional[str] = None
-
-        # Plan-related state
         self._full_planner_proto_specification: Optional[str] = None
         self._planned_files_list: List[str] = []
-
-        # Per-file iteration state
         self._current_file_index: int = -1
         self._current_target_filename: Optional[str] = None
         self._current_original_file_content_for_ai: Optional[str] = None
         self._current_plan_segment_for_file: Optional[str] = None
         self._last_generated_prompt_for_coder: Optional[str] = None
-        # self._user_feedback_for_current_file: Optional[str] = None # REMOVED - No per-file feedback cycle
-
-        # For handling split files
-        self._current_file_parts_queue: List[Tuple[str, str]] = [] # Queue of (filename_with_part_label, content_part)
+        self._current_file_parts_queue: List[Tuple[str, str]] = []
 
         self._connect_handler_signals()
         logger.info("ModificationCoordinator initialized.")
@@ -148,15 +139,15 @@ class ModificationCoordinator(QObject):
         ]
 
         if self._current_phase == ModPhase.ALL_FILES_GENERATED_AWAITING_USER_ACTION and self._original_query != self._original_query_at_start:
-            # This is an overall refinement after all files were processed once and user provided feedback
             prompt_text_parts.append(
                 f"This is a REFINEMENT of a previous overall plan based on user feedback after all files were generated. "
                 f"The original goal was: \"{self._original_query_at_start}\".\n"
-                f"The user's latest feedback on the generated files (potentially affecting multiple files) is: \"{self._original_query}\".\n" # _original_query now holds the overall feedback
+                f"The user's latest feedback on the generated files (potentially affecting multiple files) is: \"{self._original_query}\".\n"
                 f"Re-evaluate the entire plan. Identify ALL files that need to be changed (added, modified, or even if a previously modified file now needs no changes or different changes) based on this feedback.\n"
             )
-        else: # Initial plan request
-            prompt_text_parts.append(f"Implement the following user request:\nUSER REQUEST: \"{self._original_query_at_start}\"\n\n")
+        else:
+            prompt_text_parts.append(
+                f"Implement the following user request:\nUSER REQUEST: \"{self._original_query_at_start}\"\n\n")
 
         prompt_text_parts.extend([
             f"ASSOCIATED PROJECT CONTEXT (from RAG):\n{self._original_context_from_rag or 'N/A'}\n\n",
@@ -181,7 +172,7 @@ class ModificationCoordinator(QObject):
         ])
         prompt_text = "".join(prompt_text_parts)
 
-        self._full_planner_proto_specification = None # Reset for new plan
+        self._full_planner_proto_specification = None
 
         history_for_llm = [ChatMessage(role=USER_ROLE, parts=[prompt_text])]
         self._is_awaiting_llm = True
@@ -192,61 +183,73 @@ class ModificationCoordinator(QObject):
     def _handle_plan_response(self, planner_response_text: str):
         logger.info("MC: Received response from Planner AI for the detailed plan.")
         self._is_awaiting_llm = False
-        self._full_planner_proto_specification = planner_response_text.strip()
+
+        if planner_response_text:
+            actual_planner_output = planner_response_text.strip()
+            self._full_planner_proto_specification = actual_planner_output
+            logger.debug("################################################################")
+            logger.debug("###### MC: FULL PLANNER PROTO-SPECIFICATION (START) ######")
+            max_log_chunk_size = 2000
+            if len(actual_planner_output) > max_log_chunk_size:
+                for i in range(0, len(actual_planner_output), max_log_chunk_size):
+                    logger.debug(f"{actual_planner_output[i:i + max_log_chunk_size]}")
+            else:
+                logger.debug(f"{actual_planner_output}")
+            logger.debug("###### MC: FULL PLANNER PROTO-SPECIFICATION (END)   ######")
+            logger.debug("################################################################")
+        else:
+            logger.error("MC: Planner response text was EMPTY or None in _handle_plan_response!")
+            self._full_planner_proto_specification = ""
 
         parsed_list, error_msg_parse = self._parse_files_to_modify_list(self._full_planner_proto_specification)
         if error_msg_parse or parsed_list is None:
-            err_msg_ui = f"Failed to parse FILES_TO_MODIFY list from Planner AI: {error_msg_parse}. Response preview: '{planner_response_text[:300]}...'"
+            err_msg_ui = f"Failed to parse FILES_TO_MODIFY list from Planner AI: {error_msg_parse}. Response preview (first 300 chars of what was received): '{planner_response_text[:300] if planner_response_text else '[EMPTY RESPONSE]'}...'"
             self.modification_error.emit(err_msg_ui)
             self._handle_sequence_end("error_plan_parsing", err_msg_ui)
             return
 
         self._planned_files_list = parsed_list
         if not self._planned_files_list:
-            self.status_update.emit("[System: Planner AI indicates no file modifications are needed based on the current request/feedback.]")
-            self._handle_sequence_end("completed_no_files_in_plan", "Planner found no files to modify in the current plan.")
+            self.status_update.emit(
+                "[System: Planner AI indicates no file modifications are needed based on the current request/feedback.]")
+            self._handle_sequence_end("completed_no_files_in_plan",
+                                      "Planner found no files to modify in the current plan.")
             return
 
         logger.info(f"MC: Plan successfully parsed. Files to modify/create: {self._planned_files_list}")
         files_str_display = ", ".join([f"`{f}`" for f in self._planned_files_list])
         self.status_update.emit(f"[System: Planner AI will process: {files_str_display}]")
 
-        self._current_file_index = -1 # Reset for the start of new file processing
-        self._current_file_parts_queue = [] # Clear any old parts
-        QTimer.singleShot(0, self._proceed_to_next_file_or_part) # Start processing
+        self._current_file_index = -1
+        self._current_file_parts_queue = []
+        QTimer.singleShot(0, self._proceed_to_next_file_or_part)
 
     def _proceed_to_next_file_or_part(self):
-        self._is_awaiting_llm = False # Ensure this is reset
+        self._is_awaiting_llm = False
 
-        # First, check if there are pending parts of a split file to display
         if self._current_file_parts_queue:
             filename_with_part_label, content_part = self._current_file_parts_queue.pop(0)
             self.file_ready_for_display.emit(filename_with_part_label, content_part)
-            # If there are more parts for THIS file, stay in a state that will call this method again
-            # Otherwise, after the last part, this method will be called again and move to the next file.
-            if self._current_file_parts_queue: # More parts of the current file remain
-                 self.status_update.emit(f"[System: Displaying next part of `{self._current_target_filename}`...]")
-                 QTimer.singleShot(10, self._proceed_to_next_file_or_part) # Tiny delay to allow UI update
-                 return
-            else: # Last part of current file was just displayed
-                 self.status_update.emit(f"[System: All parts of `{self._current_target_filename}` displayed. Processing next file...]")
-                 # Fall through to increment _current_file_index and process next file
+            if self._current_file_parts_queue:
+                self.status_update.emit(f"[System: Displaying next part of `{self._current_target_filename}`...]")
+                QTimer.singleShot(10, self._proceed_to_next_file_or_part)
+                return
+            else:
+                self.status_update.emit(
+                    f"[System: All parts of `{self._current_target_filename}` displayed. Processing next file...]")
 
-        # If no pending parts, move to the next file in the plan
         self._current_file_index += 1
 
         if not (0 <= self._current_file_index < len(self._planned_files_list)):
-            # All files in the _planned_files_list have been processed
             logger.info("MC: All planned files and their parts processed.")
             self.status_update.emit(
                 "[System: All planned files generated. Review in Code Viewer. "
                 "Provide overall feedback for refinement or type 'accept' to finalize this modification task.]"
             )
             self._current_phase = ModPhase.ALL_FILES_GENERATED_AWAITING_USER_ACTION
-            self._is_awaiting_llm = False # Ensure user can provide feedback
+            self._is_awaiting_llm = False
             return
 
-        # Set up for the next file
         self._current_target_filename = self._planned_files_list[self._current_file_index]
         self.status_update.emit(
             f"[System: Preparing to process file {self._current_file_index + 1}/{len(self._planned_files_list)}: `{self._current_target_filename}`...]"
@@ -258,9 +261,11 @@ class ModificationCoordinator(QObject):
             self._full_planner_proto_specification or ""
         )
         if not self._current_plan_segment_for_file:
-            logger.warning(f"MC: Could not extract plan segment for '{self._current_target_filename}'. Using generic instructions.")
+            logger.warning(
+                f"MC: Could not extract plan segment for '{self._current_target_filename}'. Using generic instructions.")
             self._current_plan_segment_for_file = f"Implement changes for '{self._current_target_filename}' based on the overall user request: \"{self._original_query_at_start}\"."
-            self.status_update.emit(f"[System Warning: No detailed plan segment found for `{self._current_target_filename}`. Coder AI will use general plan.]")
+            self.status_update.emit(
+                f"[System Warning: No detailed plan segment found for `{self._current_target_filename}`. Coder AI will use general plan.]")
 
         self._request_generator_prompt_from_planner(
             target_filename_for_generator=self._current_target_filename,
@@ -277,7 +282,8 @@ class ModificationCoordinator(QObject):
             full_path = os.path.normpath(os.path.join(self._original_focus_prefix, norm_relative_path))
         elif os.path.isabs(relative_filename):
             full_path = relative_filename
-            logger.warning(f"MC: Planner provided an absolute path '{relative_filename}'. Prefer relative paths from focus_prefix.")
+            logger.warning(
+                f"MC: Planner provided an absolute path '{relative_filename}'. Prefer relative paths from focus_prefix.")
 
         if full_path and os.path.exists(full_path) and os.path.isfile(full_path):
             try:
@@ -286,9 +292,11 @@ class ModificationCoordinator(QObject):
                 logger.info(f"MC: Internally read original content for '{relative_filename}' from '{full_path}'.")
             except Exception as e:
                 logger.error(f"MC: Failed to read original content of '{relative_filename}' from '{full_path}': {e}")
-                self.status_update.emit(f"[System Warning: Could not read content of `{relative_filename}`. Assuming new file or using plan only.]")
+                self.status_update.emit(
+                    f"[System Warning: Could not read content of `{relative_filename}`. Assuming new file or using plan only.]")
         else:
-            logger.info(f"MC: Original file '{relative_filename}' not found (resolved to '{full_path}'). Treating as new.")
+            logger.info(
+                f"MC: Original file '{relative_filename}' not found (resolved to '{full_path}'). Treating as new.")
             self.status_update.emit(f"[System Note: File `{relative_filename}` appears to be new.]")
         return content
 
@@ -305,54 +313,89 @@ class ModificationCoordinator(QObject):
             logger.info(f"MC: Successfully extracted plan segment for '{filename}'. Length: {len(segment)}")
             return segment
         else:
-            logger.warning(f"MC: Could not find plan segment for '{filename}' using markers in the proto-specification.")
+            logger.warning(
+                f"MC: Could not find plan segment for '{filename}' using markers in the proto-specification.")
             return None
 
     def _request_generator_prompt_from_planner(self,
                                                target_filename_for_generator: str,
                                                original_file_content_for_context: Optional[str],
                                                plan_segment_for_this_file: str):
-        logger.debug(f"MC: Asking Planner AI to craft prompt for Generator AI regarding '{target_filename_for_generator}'.")
-        self.status_update.emit(f"[System: Planner AI is formulating instructions for Coder AI regarding `{target_filename_for_generator}`...]")
+        logger.debug(
+            f"MC: Asking Planner AI to craft prompt for Generator AI regarding '{target_filename_for_generator}'.")
+        self.status_update.emit(
+            f"[System: Planner AI is formulating instructions for Coder AI regarding `{target_filename_for_generator}`...]")
 
         file_op_type = "UPDATE the existing file" if original_file_content_for_context else "CREATE a NEW file"
 
+        # --- REVISED AND STRENGTHENED DETAILED INSTRUCTIONS FOR THE PLANNER ---
         prompt_for_planner = (
-            f"You are an expert AI assistant responsible for creating precise instructions for a specialized code generation LLM (e.g., CodeLlama, StarCoder2).\n"
-            f"The overall user request is: \"{self._original_query_at_start}\"\n"
-            f"The current task is to {file_op_type}: `{target_filename_for_generator}`.\n\n"
-            f"The high-level plan for this specific file is:\n"
-            f"--- PLAN SEGMENT FOR `{target_filename_for_generator}` ---\n"
-            f"{plan_segment_for_this_file}\n"
-            f"--- END PLAN SEGMENT ---\n\n"
+            f"\nYOUR CRITICAL TASK, PLANNER AI: You must now generate the **complete, precise, and compelling instruction text** that will be sent *directly* to a specialized Python Coder AI. "
+            f"The Coder AI's ONLY job is to produce the full Python source code. The quality of your instruction is PARAMOUNT to getting good code.\n\n"
+
+            f"The Coder AI will be tasked to {file_op_type} the file: `{target_filename_for_generator}`.\n"
+            f"The overall user request driving this is: \"{self._original_query_at_start}\"\n\n"
+
+            f"**The instruction text that YOU (Planner AI) generate for the Coder AI MUST adhere to the following structure and content rigorously:**\n\n"
+
+            f"**SECTION 1: CODER'S CORE MISSION (Start your output to the Coder with this)**\n"
+            f"   \"You are an expert Python Coder AI. Your primary mission is to generate the **complete, fully functional, and production-quality Python code** for the file `{target_filename_for_generator}`. "
+            f"You must meticulously follow the detailed plan provided below AND ensure every aspect of the generated code meets the production quality standards outlined.\n\n"
+
+            f"**SECTION 2: DETAILED IMPLEMENTATION PLAN FOR `{target_filename_for_generator}` (Include this exactly as provided to you)**\n"
+            f"   ```text\n"
+            f"   --- PLAN SEGMENT FOR `{target_filename_for_generator}` ---\n"
+            f"   {plan_segment_for_this_file}\n"
+            f"   --- END PLAN SEGMENT ---\n"
+            f"   ```\n\n"
         )
 
         if original_file_content_for_context:
-            max_orig_context_for_planner_prompt = 4000
-            display_orig_content = original_file_content_for_context
-            if len(original_file_content_for_context) > max_orig_context_for_planner_prompt:
-                display_orig_content = original_file_content_for_context[:max_orig_context_for_planner_prompt] + \
-                                       "\n... [Original Content Truncated for this Planner Instruction] ..."
             prompt_for_planner += (
-                f"CONTEXT: The original content of `{target_filename_for_generator}` (if it exists) is:\n"
-                f"```{'python' if target_filename_for_generator.endswith('.py') else ''}\n{display_orig_content}\n```\n\n"
+                f"**SECTION 3: GUIDANCE ON EXISTING CODE (If applicable for `{target_filename_for_generator}`)**\n"
+                f"   'This file, `{target_filename_for_generator}`, exists. Its original content is:\n"
+                f"   ```python_original_for_coder\n"
+                f"   {original_file_content_for_context}\n"
+                f"   ```\n"
+                f"   You MUST use this original content as the foundation. Preserve all unchanged code and logic perfectly. Only modify or add code as explicitly dictated by the plan in Section 2. If the plan implies removing sections, do so carefully.'\n\n"
             )
         else:
-            prompt_for_planner += f"CONTEXT: The file `{target_filename_for_generator}` is new and should be created from scratch.\n\n"
+            prompt_for_planner += (
+                f"**SECTION 3: GUIDANCE ON NEW FILE CREATION (For `{target_filename_for_generator}`)**\n"
+                f"   'The file `{target_filename_for_generator}` is NEW. You must create it entirely from scratch, strictly following the plan in Section 2 and all quality requirements in Section 4.'\n\n"
+            )
 
         prompt_for_planner += (
-            f"YOUR TASK: Generate the complete and precise instruction text that will be sent *directly* to the code generation LLM. "
-            f"This instruction MUST guide the Coder AI to produce the FULL and correct code for the *entire* file `{target_filename_for_generator}`.\n"
-            f"The instruction you generate should:\n"
-            f"1. Clearly state the target filename: `{target_filename_for_generator}`.\n"
-            f"2. Incorporate the user's original request context: \"{self._original_query_at_start}\" and this file's PLAN SEGMENT.\n"
-            f"3. If updating, explicitly include the *complete original content* of `{target_filename_for_generator}` within the instruction for the Coder AI, clearly marked (e.g., inside a specific code block like ```python_original\\n...\\n```). Emphasize preserving unchanged parts perfectly.\n"
-            f"4. If creating a new file, state this clearly.\n"
-            f"5. Remind the Coder AI that its response MUST be ONLY a single standard Markdown fenced code block. This block MUST be labeled with the programming language followed by the exact filename `{target_filename_for_generator}` (e.g., ```python {target_filename_for_generator}\\n...\\n``` or ```javascript {target_filename_for_generator}\\n...\\n```). "
-            f"**CRITICAL EMPHASIS: The Coder AI's response must contain NO other text, no explanations, no summaries, no greetings, no apologies, no conversational elements whatsoever, neither before nor after this single required code block.** "
-            f"The Coder AI's entire response must be ONLY the code block itself, starting with ```<language> {target_filename_for_generator} and ending with ```.\n\n"
-            f"OUTPUT ONLY THE INSTRUCTION TEXT FOR THE CODER AI. Do not add any conversational preamble or explanation of your own."
+            f"**SECTION 4: MANDATORY PRODUCTION-QUALITY STANDARDS (Apply these to ALL generated code for `{target_filename_for_generator}`)**\n"
+            f"   'As you implement the plan from Section 2, you MUST ensure the *entire resulting codebase* for `{target_filename_for_generator}` adheres to the following production-quality Python standards:\n"
+            f"    A. **Functionality & Completeness:** The code MUST fully implement the plan. NO STUBS or `TODO` comments for planned features. All logic must be complete and correct.\n"
+            f"    B. **PEP 8 & Pythonic Style:** Strictly follow PEP 8. Write clean, readable, Pythonic code (e.g., use comprehensions, context managers (`with`)).\n"
+            f"    C. **Imports:** Include ALL necessary imports at the top, grouped and alphabetized (standard library, then third-party, then local application).\n"
+            f"    D. **Type Hints:** Provide type hints for ALL function/method parameters and return values, and for significant variables. Use the `typing` module (`List`, `Dict`, `Optional`, etc.).\n"
+            f"    E. **Docstrings (Google Style):** Write comprehensive Google-style docstrings for the module (if applicable), and for ALL public classes, functions, and methods. Detail purpose, arguments (with types), returns (with type), and any exceptions raised.\n"
+            f"    F. **Inline Comments:** Add concise inline comments (#) to explain complex, non-obvious logic or important assumptions. Do not comment on obvious code.\n"
+            f"    G. **Robust Error Handling:** Use `try-except` blocks for operations prone to failure (file I/O, data validation, `IndexError`, `KeyError`, etc.). Handle specific exceptions. Log errors appropriately.\n"
+            f"    H. **Logging (No `print`):** Integrate logging using Python's `logging` module (e.g., `logger = logging.getLogger(__name__)`). Use `logger.info()`, `logger.warning()`, etc. DO NOT use `print()` for debugging or logging in the generated file.\n"
+            f"    I. **Constants:** Define module-level constants for any magic numbers or repeated strings. Avoid hardcoding sensitive information.\n"
+            f"    J. **Clear Naming:** Use `snake_case` for functions/variables, `PascalCase` for classes. Names must be descriptive.\n"
+            f"    K. **Resource Management:** Ensure external resources (files, etc.) are properly managed and closed (e.g., using `with` statements).\n"
+            f"    L. **Modularity:** If the plan implies complex logic within a single function, break it down into smaller, well-named helper functions where appropriate.'\n\n"
+
+            f"**SECTION 5: STRICT OUTPUT FORMAT FOR CODER (ABSOLUTELY CRITICAL - No deviations!)**\n"
+            f"   'Your response MUST be ONLY ONE single standard Markdown fenced code block.\n"
+            f"   - It MUST start with ```python {target_filename_for_generator}\\n (ensure the filename is EXACT and a newline follows the language and filename).\n"
+            f"   - Inside the block, provide the FULL and COMPLETE Python source code for `{target_filename_for_generator}`.\n"
+            f"   - The block MUST end with ```.\n"
+            f"   - There should be ABSOLUTELY NO other text, explanations, summaries, apologies, or conversational elements from you (Coder AI) anywhere in your response – neither before the first ``` nor after the final ```.\n"
+            f"   - If, after your best effort, you cannot fulfill the request or an error occurs that prevents code generation, output ONLY an empty code block with the correct label: ```python {target_filename_for_generator}\\n```'\n\n"
+
+            f"**SECTION 6: FINAL INSTRUCTION TO CODER (End your output to the Coder with this)**\n"
+            f"   'Proceed to generate the complete, production-quality Python code for `{target_filename_for_generator}` now, strictly adhering to all the requirements specified above (Sections 1-5).'\n\n"
+
+            f"Planner AI, your entire output from this point MUST BE ONLY the instruction text for the Coder AI, structured exactly as specified above (from 'SECTION 1: CODER'S CORE MISSION' through 'SECTION 6: FINAL INSTRUCTION TO CODER'). "
+            f"Do not add any of your own conversational preamble, meta-commentary, or explanations outside of this structured Coder instruction."
         )
+        # --- END REVISED PLANNER PROMPT ---
 
         history_for_llm = [ChatMessage(role=USER_ROLE, parts=[prompt_for_planner])]
         self._is_awaiting_llm = True
@@ -360,15 +403,17 @@ class ModificationCoordinator(QObject):
         self.request_llm_call.emit(PLANNER_BACKEND_ID, history_for_llm)
 
     def _handle_planner_refined_generator_prompt(self, refined_generator_prompt_text: str):
-        logger.info(f"MC: Received refined/created prompt for Generator AI (for file '{self._current_target_filename}').")
+        logger.info(
+            f"MC: Received refined/created prompt for Generator AI (for file '{self._current_target_filename}').")
         self._is_awaiting_llm = False
         self._last_generated_prompt_for_coder = refined_generator_prompt_text.strip()
 
         if not self._last_generated_prompt_for_coder:
             err_msg = f"Planner AI returned an empty instruction for the Coder AI for file '{self._current_target_filename}'."
             self.modification_error.emit(err_msg)
-            self.status_update.emit(f"[System Error: Planner failed to create instructions for Coder AI for `{self._current_target_filename}`. Skipping this file.]")
-            QTimer.singleShot(0, self._proceed_to_next_file_or_part) # Skip to next file
+            self.status_update.emit(
+                f"[System Error: Planner failed to create instructions for Coder AI for `{self._current_target_filename}`. Skipping this file.]")
+            QTimer.singleShot(0, self._proceed_to_next_file_or_part)
             return
 
         self._request_code_generation_from_coder(self._last_generated_prompt_for_coder)
@@ -384,9 +429,11 @@ class ModificationCoordinator(QObject):
 
     def process_llm_response(self, backend_id: str, response_message: ChatMessage):
         if not self._is_active or not self._is_awaiting_llm:
-            logger.warning(f"MC: process_llm_response from '{backend_id}' called when not active/awaiting. Phase: {self._current_phase}")
+            logger.warning(
+                f"MC: process_llm_response from '{backend_id}' called when not active/awaiting. Phase: {self._current_phase}")
             return
-        logger.info(f"MC: Processing LLM response from '{backend_id}' during phase '{self._current_phase}'. ID: {response_message.id}")
+        logger.info(
+            f"MC: Processing LLM response from '{backend_id}' during phase '{self._current_phase}'. ID: {response_message.id}")
         response_text = response_message.text.strip()
 
         try:
@@ -407,11 +454,26 @@ class ModificationCoordinator(QObject):
             self._handle_sequence_end("error_processing_llm_response", f"Error processing {backend_id} response: {e}")
 
     def _handle_coder_ai_code_response(self, generated_code_text: str, coder_response_message: ChatMessage):
-        logger.info(f"MC: Handling Coder AI's response for code file '{self._current_target_filename}'. Message ID: {coder_response_message.id}")
+        logger.info(
+            f"MC: Handling Coder AI's response for code file '{self._current_target_filename}'. Message ID: {coder_response_message.id}")
         self._is_awaiting_llm = False
         if not self._current_target_filename:
-            self._handle_sequence_end("error_internal_state", "MC Error: Missing target filename during code generation response.")
+            self._handle_sequence_end("error_internal_state",
+                                      "MC Error: Missing target filename during code generation response.")
             return
+
+        # +++ ADDED DEBUG LOGGING FOR RAW CODER OUTPUT +++
+        logger.debug("################################################################")
+        logger.debug(f"###### MC: RAW CODER AI OUTPUT for '{self._current_target_filename}' (START) ######")
+        max_log_chunk_size = 2000
+        if len(generated_code_text) > max_log_chunk_size:
+            for i in range(0, len(generated_code_text), max_log_chunk_size):
+                logger.debug(f"{generated_code_text[i:i + max_log_chunk_size]}")
+        else:
+            logger.debug(f"{generated_code_text}")
+        logger.debug(f"###### MC: RAW CODER AI OUTPUT for '{self._current_target_filename}' (END)   ######")
+        logger.debug("################################################################")
+        # +++++++++++++++++++++++++++++++++++++++++++++++++
 
         if self._handler.process_llm_code_generation_response(generated_code_text, self._current_target_filename):
             parsed_filename_content_tuple = self._handler.get_last_emitted_filename_and_content()
@@ -422,15 +484,19 @@ class ModificationCoordinator(QObject):
                     coder_response_message.metadata = {}
                 coder_response_message.metadata["code_block_processed_by_mc"] = True
                 coder_response_message.metadata["original_filename_for_viewer"] = actual_filename
-                logger.info(f"MC: Flagged ChatMessage ID {coder_response_message.id} as processed by MC for '{actual_filename}'")
+                logger.info(
+                    f"MC: Flagged ChatMessage ID {coder_response_message.id} as processed by MC for '{actual_filename}'")
 
                 is_new_file = self._current_original_file_content_for_ai is None
-                if not is_new_file and actual_content.strip() == (self._current_original_file_content_for_ai or "").strip():
-                    self.status_update.emit(f"[System: No effective changes were applied by AI to '{actual_filename}'. Skipping display, proceeding to next.]")
+                if not is_new_file and actual_content.strip() == (
+                        self._current_original_file_content_for_ai or "").strip():
+                    self.status_update.emit(
+                        f"[System: No effective changes were applied by AI to '{actual_filename}'. Skipping display, proceeding to next.]")
                     QTimer.singleShot(0, self._proceed_to_next_file_or_part)
                     return
                 if is_new_file and not actual_content.strip():
-                    self.status_update.emit(f"[System: File '{actual_filename}' was planned as new, but AI generated no content. Assuming not needed. Skipping display, proceeding to next.]")
+                    self.status_update.emit(
+                        f"[System: File '{actual_filename}' was planned as new, but AI generated no content. Assuming not needed. Skipping display, proceeding to next.]")
                     QTimer.singleShot(0, self._proceed_to_next_file_or_part)
                     return
 
@@ -446,17 +512,17 @@ class ModificationCoordinator(QObject):
                     self._current_file_parts_queue.append((actual_filename, actual_content))
 
                 self.status_update.emit(f"[System: Code for `{actual_filename}` generated. Queued for display.]")
-                QTimer.singleShot(0, self._proceed_to_next_file_or_part) # This will now pick up from the queue or move to next file
+                QTimer.singleShot(0, self._proceed_to_next_file_or_part)
             else:
                 mismatch_info = f"Expected '{self._current_target_filename}', MH provided '{parsed_filename_content_tuple[0] if parsed_filename_content_tuple else 'None'}'."
                 logger.error(f"MC: Internal Mismatch after MH parsing. {mismatch_info}")
-                self.status_update.emit(f"[System Warning: Issue processing Coder AI output for `{self._current_target_filename}`. {mismatch_info}. Skipping this file.]")
-                QTimer.singleShot(0, self._proceed_to_next_file_or_part) # Skip to next file on parsing mismatch
-        # If process_llm_code_generation_response returns False, _handle_mh_parsing_error is triggered by MH signal
+                self.status_update.emit(
+                    f"[System Warning: Issue processing Coder AI output for `{self._current_target_filename}`. {mismatch_info}. Skipping this file.]")
+                QTimer.singleShot(0, self._proceed_to_next_file_or_part)
 
     def process_user_input(self, user_command: str):
         if not self._is_active: return
-        if self._is_awaiting_llm: # This means it's in AWAITING_PLAN, AWAITING_GENERATOR_PROMPT_REFINEMENT, or AWAITING_CODE_GENERATION
+        if self._is_awaiting_llm:
             self.status_update.emit("[System: Please wait for the current AI processing to complete.]")
             return
 
@@ -470,26 +536,28 @@ class ModificationCoordinator(QObject):
         if self._current_phase == ModPhase.ALL_FILES_GENERATED_AWAITING_USER_ACTION:
             if command_lower in ["accept", "done", "looks good", "ok", "okay", "proceed", "complete", "finalize"]:
                 self._handle_sequence_end("completed_by_user_acceptance", "User accepted all generated files.")
-            else: # Overall feedback for a new refinement cycle
-                self.status_update.emit(f"[System: Received overall feedback: \"{user_command[:50]}...\". Requesting full re-plan...]")
+            else:
+                self.status_update.emit(
+                    f"[System: Received overall feedback: \"{user_command[:50]}...\". Requesting full re-plan...]")
                 self._original_query = f"The initial request was: '{self._original_query_at_start}'. Based on the generated files, the user now provides this overall feedback for refinement: '{user_command}'"
                 self._is_awaiting_llm = False
                 self._planned_files_list = []
                 self._current_file_index = -1
-                self._current_file_parts_queue = [] # Clear queue for re-plan
-                self._request_initial_plan_from_planner() # Request a new plan based on the overall feedback
+                self._current_file_parts_queue = []
+                self._request_initial_plan_from_planner()
         else:
-            # If not in the final feedback phase, and not awaiting LLM, it means file generation is ongoing but paused (e.g., error).
-            # Or it's an unexpected state.
-            self.status_update.emit(f"[System: Currently processing files. Please wait until all files are generated to provide overall feedback or type 'cancel'. If stuck, 'cancel' might be needed.]")
+            self.status_update.emit(
+                f"[System: Currently processing files. Please wait until all files are generated to provide overall feedback or type 'cancel'. If stuck, 'cancel' might be needed.]")
 
     @pyqtSlot(str)
     def _handle_mh_parsing_error(self, error_message: str):
         if not self._is_active: return
         logger.error(f"MC: Received parsing error from MH for file '{self._current_target_filename}': {error_message}")
-        self.status_update.emit(f"[System Error: Coder AI output for `{self._current_target_filename}` was not in the expected format. This file may be incomplete or incorrect. Skipping this file and proceeding.]")
-        self._is_awaiting_llm = False # Ensure user can interact if needed, though it auto-proceeds
-        QTimer.singleShot(0, self._proceed_to_next_file_or_part) # Proceed to next file/part
+        # The error_message from MH already includes a preview, so we can use it directly.
+        self.status_update.emit(
+            f"[System Error: Coder AI output for `{self._current_target_filename}` was not in the expected format. This file may be incomplete or incorrect. Skipping this file and proceeding.]")
+        self._is_awaiting_llm = False
+        QTimer.singleShot(0, self._proceed_to_next_file_or_part)
 
     def _parse_files_to_modify_list(self, response_text: str) -> Tuple[Optional[List[str]], Optional[str]]:
         marker = "FILES_TO_MODIFY:"
@@ -520,13 +588,14 @@ class ModificationCoordinator(QObject):
 
     def _handle_sequence_end(self, reason: str, details: Optional[str] = None):
         if not self._is_active and reason != "error_processing_llm_response":
-             logger.debug(f"MC: _handle_sequence_end called but not active. Reason: {reason}.")
-             return
+            logger.debug(f"MC: _handle_sequence_end called but not active. Reason: {reason}.")
+            return
 
         log_message = f"MC: Ending sequence. Reason: {reason}."
         if details: log_message += f" Details: {details}"
         logger.info(log_message)
 
-        original_query_summary = self._original_query_at_start[:75] + '...' if self._original_query_at_start and len(self._original_query_at_start) > 75 else self._original_query_at_start or "User's request"
+        original_query_summary = self._original_query_at_start[:75] + '...' if self._original_query_at_start and len(
+            self._original_query_at_start) > 75 else self._original_query_at_start or "User's request"
         self.modification_sequence_complete.emit(reason, original_query_summary)
         self._reset_state()
