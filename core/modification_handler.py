@@ -1,4 +1,3 @@
-# core/modification_handler.py
 import logging
 import re
 from typing import List, Tuple, Optional, Dict, Any
@@ -9,14 +8,14 @@ logger = logging.getLogger(__name__)
 
 
 class ModificationHandler(QObject):
-    code_file_ready = pyqtSignal(str, str) # filename, content
+    code_file_ready = pyqtSignal(str, str)
     status_message_ready = pyqtSignal(str)
     modification_parsing_error = pyqtSignal(str)
 
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
-        self._last_processed_filename: Optional[str] = None # Changed from _last_emitted_filename
-        self._last_processed_content: Optional[str] = None # New: to store content
+        self._last_processed_filename: Optional[str] = None
+        self._last_processed_content: Optional[str] = None
         self._is_active: bool = False
         logger.info("ModificationHandler initialized.")
 
@@ -42,7 +41,6 @@ class ModificationHandler(QObject):
             full_plan: List[str],
             original_file_content: Optional[str] = None
     ) -> str:
-        # ... (implementation as before)
         if not self._is_active:
             logger.warning("MH: prepare_standard_instruction called when not active.")
             return "[ERROR: Handler not active]"
@@ -102,7 +100,6 @@ class ModificationHandler(QObject):
             user_feedback: str,
             previous_llm_instruction: str
     ) -> str:
-        # ... (implementation as before) ...
         if not self._is_active:
             logger.warning("MH: prepare_refinement_instruction called when not active.")
             return "[ERROR: Handler not active]"
@@ -125,98 +122,91 @@ class ModificationHandler(QObject):
         )
         return instruction
 
-
     def process_llm_code_generation_response(self, response_text: str, expected_filename: str) -> bool:
         if not self._is_active:
-            logger.warning(f"MH: process_llm_code_generation_response called for '{expected_filename}' when not active.")
-            self._last_processed_filename = None # Ensure reset
+            logger.warning(
+                f"MH: process_llm_code_generation_response called for '{expected_filename}' when not active.")
+            self._last_processed_filename = None
             self._last_processed_content = None
             return False
 
         logger.info(f"MH: Processing Generator AI response, expecting file: '{expected_filename}'")
-        self._last_processed_filename = None # Reset before attempting parse
+        self._last_processed_filename = None
         self._last_processed_content = None
 
         parsed_file_tuple = self._parse_first_code_block_lenient(response_text, expected_filename)
 
         if not parsed_file_tuple:
-            err_msg = (f"Generator AI response format error for '{expected_filename}'. Expected a single Markdown code block "
-                       f"labeled with the filename. Response did not contain a recognizable code block or the label was incorrect. "
-                       f"Preview:\n{response_text[:300]}...")
+            err_msg = (
+                f"Generator AI response format error for '{expected_filename}'. Expected a single Markdown code block "
+                f"labeled with the filename. Response did not contain a recognizable code block or the label was incorrect. "
+                f"Preview:\n{response_text[:300]}...")
             logger.error(err_msg)
-            self.modification_parsing_error.emit(err_msg) # Emit specific error
+            self.modification_parsing_error.emit(err_msg)
             return False
 
         parsed_filename, content = parsed_file_tuple
         self._last_processed_filename = parsed_filename
-        self._last_processed_content = content # Store content
+        self._last_processed_content = content
 
-        # Instead of emitting code_file_ready here, MC will call the new getter.
-        # self.code_file_ready.emit(parsed_filename, content) # This line can be removed if MC uses the getter
         self.status_message_ready.emit(
-             f"[System Info from MH: Code for '{parsed_filename}' seems successfully parsed.]") # Optional status
+            f"[System Info from MH: Code for '{parsed_filename}' seems successfully parsed.]")
         logger.info(f"MH: Successfully parsed code for '{parsed_filename}'. Content stored.")
         return True
 
     def _parse_first_code_block_lenient(self, text_to_parse: str, expected_filename: str) -> Optional[Tuple[str, str]]:
-        # ... (implementation as before, ensure it's robust) ...
         escaped_expected_filename = re.escape(expected_filename)
         specific_pattern = rf"```(?:[a-zA-Z0-9_\-\.]*)?\s*{escaped_expected_filename}\s*\n(.*?)\n```"
         match = re.search(specific_pattern, text_to_parse, re.DOTALL | re.IGNORECASE)
 
         if match:
-            filepath = expected_filename # Use the expected filename since it matched the label
+            filepath = expected_filename
             content = match.group(1)
         else:
-            logger.debug(f"MH_Lenient: Specific pattern with filename label '{expected_filename}' failed. Trying generic python block.")
-            generic_pattern = r"```python\s*\n(.*?)\n```" # Matches ```python
+            logger.debug(
+                f"MH_Lenient: Specific pattern with filename label '{expected_filename}' failed. Trying generic python block.")
+            generic_pattern = r"```python\s*\n(.*?)\n```"
             match = re.search(generic_pattern, text_to_parse, re.DOTALL | re.IGNORECASE)
             if match:
-                filepath = expected_filename # Assume content is for expected_filename
+                filepath = expected_filename
                 content = match.group(1)
                 logger.warning(
                     f"MH_Lenient: Matched generic 'python' block for '{expected_filename}'. Assuming content is correct. Output format reminder might be needed for Coder AI.")
             else:
                 logger.debug(f"MH_Lenient: Generic python block failed. Trying any code block (heuristic).")
-                # Fallback: try to find *any* code block if the specific one isn't found.
-                # This is less reliable as it doesn't confirm the filename label.
+
                 any_code_block_pattern = r"```(?:[a-zA-Z0-9_\-\.+]+)?\s*\n(.*?)\n```"
                 match = re.search(any_code_block_pattern, text_to_parse, re.DOTALL)
                 if match:
-                    filepath = expected_filename # Best guess
+                    filepath = expected_filename
                     content = match.group(1)
                     logger.warning(
                         f"MH_Lenient: Matched ANY code block (heuristic) and assuming it's for '{expected_filename}'. Output format needs to be strictly enforced for Coder AI.")
                 else:
-                    logger.warning(f"MH_Lenient: No code block found even with lenient parsing for '{expected_filename}'.")
+                    logger.warning(
+                        f"MH_Lenient: No code block found even with lenient parsing for '{expected_filename}'.")
                     return None
 
-        # Clean up common leading/trailing newlines often added by LLMs inside blocks
-        if content.startswith('\n'): content = content[1:]
-        if content.endswith('\n'): content = content[:-1]
+        if content is not None:
+            if content.startswith('\n'): content = content[1:]
+            if content.endswith('\n'): content = content[:-1]
 
-        # Check for extra text after the first valid block
-        end_of_block = match.end()
-        remaining_text_after_block = text_to_parse[end_of_block:].strip()
-        if remaining_text_after_block:
-            extra_text_warning = f"[System Warning from MH: Generator AI included extra text after the required code block for '{filepath}', which was ignored. Extra text preview: '{remaining_text_after_block[:100]}...']"
-            logger.warning(extra_text_warning)
-            self.status_message_ready.emit(extra_text_warning) # Inform user via status
+        if match:
+            end_of_block = match.end()
+            remaining_text_after_block = text_to_parse[end_of_block:].strip()
+            if remaining_text_after_block:
+                extra_text_warning = f"[System Warning from MH: Generator AI included extra text after the required code block for '{filepath}', which was ignored. Extra text preview: '{remaining_text_after_block[:100]}...']"
+                logger.warning(extra_text_warning)
+                self.status_message_ready.emit(extra_text_warning)
 
-        return filepath, content
+        if filepath is not None and content is not None:
+            return filepath, content
+        return None
 
-    # VVVV NEW METHOD TO ADD VVVV
     def get_last_emitted_filename_and_content(self) -> Optional[Tuple[str, str]]:
-        """
-        Returns the last filename and content that was successfully processed
-        by process_llm_code_generation_response.
-        Returns None if no content has been successfully processed since last reset.
-        """
         if self._last_processed_filename and self._last_processed_content is not None:
             return self._last_processed_filename, self._last_processed_content
         return None
-    # ^^^^ END NEW METHOD ^^^^
 
-    # Renamed from get_last_emitted_filename for clarity with new method
     def get_last_processed_filename(self) -> Optional[str]:
         return self._last_processed_filename

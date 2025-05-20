@@ -1,4 +1,3 @@
-# ui/main_window.py
 import logging
 import os
 import re
@@ -15,15 +14,14 @@ from PyQt6.QtCore import Qt, pyqtSlot, QTimer, QSize, QEvent, QPoint, pyqtSignal
 from PyQt6.QtGui import QFont, QIcon, QMovie, QCloseEvent, QShortcut, QKeyEvent, QKeySequence, QCursor
 
 try:
-    # Ensure ChatManager's DEFAULT_CHAT_BACKEND_ID is available if needed for logic
-    from core.chat_manager import \
-        ChatManager  # , DEFAULT_CHAT_BACKEND_ID (No longer directly needed here for model setting)
+    from core.chat_manager import ChatManager
     from core.models import ChatMessage, SYSTEM_ROLE, ERROR_ROLE, MODEL_ROLE, USER_ROLE
     from core.message_enums import MessageLoadingState
     from .left_panel import LeftControlPanel
     from .dialog_service import DialogService
     from .chat_tab_manager import ChatTabManager
     from utils import constants
+    from core.modification_coordinator import ModPhase
 except ImportError as e:
     logging.basicConfig(level=logging.DEBUG)
     logging.critical(f"CRITICAL IMPORT ERROR in main_window.py: {e}", exc_info=True)
@@ -65,22 +63,21 @@ class MainWindow(QWidget):
         except Exception as e:
             logger.critical(f"Failed to initialize DialogService: {e}", exc_info=True)
             QApplication.quit();
-            return  # type: ignore
+            return
 
-        self._init_ui()  # LeftPanel is created here
+        self._init_ui()
 
         if self.main_tab_widget is not None:
             try:
-                # Pass chat_manager to ChatTabManager
                 self.chat_tab_manager = ChatTabManager(self.main_tab_widget, self.chat_manager, self)
             except Exception as e:
                 logger.critical(f"Failed to initialize ChatTabManager: {e}", exc_info=True)
                 QApplication.quit();
-                return  # type: ignore
+                return
         else:
             logger.critical("main_tab_widget is None after _init_ui. Cannot initialize ChatTabManager.")
             QApplication.quit();
-            return  # type: ignore
+            return
 
         self._apply_styles()
         self._connect_signals()
@@ -90,7 +87,7 @@ class MainWindow(QWidget):
     def _setup_window(self):
         self.setWindowTitle(constants.APP_NAME)
         try:
-            app_icon_path = os.path.join(constants.ASSETS_PATH, "Synchat.ico")  # Ensure this matches your asset
+            app_icon_path = os.path.join(constants.ASSETS_PATH, "Synchat.ico")
             std_fallback_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
             app_icon = QIcon(app_icon_path) if os.path.exists(app_icon_path) else std_fallback_icon
             if not app_icon.isNull():
@@ -111,11 +108,10 @@ class MainWindow(QWidget):
         main_splitter.setHandleWidth(1)
 
         try:
-            # Pass ChatManager to LeftControlPanel
             self.left_panel = LeftControlPanel(chat_manager=self.chat_manager, parent=self)
             assert self.left_panel is not None, "LeftControlPanel creation failed."
             self.left_panel.setObjectName("LeftPanel")
-            self.left_panel.setMinimumWidth(270)  # Increased min width slightly for provider/model combos
+            self.left_panel.setMinimumWidth(270)
         except Exception as e_lcp:
             logger.critical(f"CRITICAL ERROR creating LeftControlPanel: {e_lcp}", exc_info=True)
             raise RuntimeError("Failed to create LeftControlPanel") from e_lcp
@@ -151,7 +147,7 @@ class MainWindow(QWidget):
 
         main_splitter.addWidget(self.left_panel)
         main_splitter.addWidget(right_panel_widget)
-        main_splitter.setSizes([270, 730])  # Adjusted initial split
+        main_splitter.setSizes([270, 730])
         main_splitter.setStretchFactor(0, 0)
         main_splitter.setStretchFactor(1, 1)
         main_hbox_layout.addWidget(main_splitter)
@@ -192,7 +188,6 @@ class MainWindow(QWidget):
         lp.viewRagContentClicked.connect(self._show_rag_viewer)
         lp.newProjectClicked.connect(self._handle_new_project_request)
         lp.uploadGlobalClicked.connect(self._trigger_global_upload_menu)
-        # lp.modelSelected.connect(self.chat_manager.set_model) # OLD - LeftPanel now directly updates ChatManager
         lp.projectSelected.connect(self.chat_manager.set_current_project)
         lp.temperatureChanged.connect(self._handle_temperature_changed)
 
@@ -206,9 +201,6 @@ class MainWindow(QWidget):
         cm.status_update.connect(self.update_status)
         cm.error_occurred.connect(self._handle_error)
         cm.busy_state_changed.connect(self._handle_busy_state)
-        # The config_state_changed signal from ChatManager is now more crucial for MainWindow
-        # if it needs to react broadly to backend config changes (e.g., for window title).
-        # LeftPanel also listens to this to update its own UI elements.
         cm.backend_config_state_changed.connect(self._handle_config_state)
         cm.stream_started.connect(self._handle_stream_started)
         cm.stream_chunk_received.connect(self._handle_stream_chunk)
@@ -216,7 +208,6 @@ class MainWindow(QWidget):
         cm.code_file_updated.connect(self._handle_code_file_update)
         cm.project_inventory_updated.connect(lp.handle_project_inventory_update)
         cm.current_project_changed.connect(ctm.ensure_tab_active_and_loaded)
-        # cm.available_models_changed.connect(self._handle_available_models_changed) # OLD, LeftPanel handles this directly now
         cm.token_usage_updated.connect(self._handle_token_usage_update)
 
         shortcuts = {
@@ -301,10 +292,59 @@ class MainWindow(QWidget):
         active_project_id = self.chat_manager.get_current_project_id()
         logger.info(f"MW SLOT _handle_stream_started for project '{active_project_id}', request_id '{request_id}'.")
 
+        is_mc_related = False
+        if self.chat_manager and self.chat_manager._modification_coordinator:
+            mc = self.chat_manager._modification_coordinator
+            if mc.is_active():
+                if hasattr(mc, '_active_code_generation_tasks') and request_id in mc._active_code_generation_tasks:
+                    is_mc_related = True
+                elif hasattr(mc,
+                             '_current_phase') and mc._current_phase == ModPhase.AWAITING_PLAN_AND_ALL_CODER_INSTRUCTIONS:  # CORRECTED
+                    if request_id.startswith("mc_planner_initial_"):
+                        is_mc_related = True
+
+        if is_mc_related:
+            logger.debug(f"Stream started for MC (ReqID: {request_id}). Not updating main chat UI for placeholder.")
+            return
+
+        target_tab = self.chat_tab_manager.get_chat_tab_instance(
+            active_project_id) if self.chat_tab_manager and active_project_id else None
+        if target_tab:
+            display_area = target_tab.get_chat_display_area()
+            if display_area and display_area.get_model():
+                model = display_area.get_model()
+                existing_row = model.find_message_row_by_id(request_id)
+                if existing_row is None:
+                    placeholder_message = ChatMessage(id=request_id, role=MODEL_ROLE, parts=[""],
+                                                      loading_state=MessageLoadingState.LOADING)
+                    display_area.add_message_to_model(placeholder_message)
+                else:
+                    model.update_message_loading_state_by_id(request_id, MessageLoadingState.LOADING)
+            else:
+                logger.error(
+                    f"No display area or model in active tab for project '{active_project_id}' to start stream.")
+        else:
+            logger.error(f"No active tab found for project '{active_project_id}' to start stream.")
+
     @pyqtSlot(str)
     def _handle_stream_chunk(self, chunk: str):
         active_project_id = self.chat_manager.get_current_project_id()
         if not (self.chat_tab_manager and active_project_id): return
+
+        is_mc_related = False
+        if self.chat_manager and self.chat_manager._modification_coordinator:
+            mc = self.chat_manager._modification_coordinator
+            if mc.is_active():
+                if hasattr(mc, '_active_code_generation_tasks') and mc._active_code_generation_tasks:
+                    is_mc_related = True
+                elif hasattr(mc,
+                             '_current_phase') and mc._current_phase == ModPhase.AWAITING_PLAN_AND_ALL_CODER_INSTRUCTIONS:  # CORRECTED
+                    is_mc_related = True
+
+        if is_mc_related:
+            logger.debug(f"Stream chunk for MC. Not updating main chat UI. Chunk: '{chunk[:30]}...'")
+            return
+
         target_tab = self.chat_tab_manager.get_chat_tab_instance(active_project_id)
         if target_tab:
             display_area = target_tab.get_chat_display_area()
@@ -313,12 +353,24 @@ class MainWindow(QWidget):
             else:
                 logger.error(f"No display area in active tab for project '{active_project_id}' to append chunk.")
         else:
-            logger.error(f"No active tab found for project '{active_project_id}' to append chunk.")
-
-    @pyqtSlot()
+            logger.error(f"No active tab found for project '{active_project_id}' to append chunk.")    @pyqtSlot()
     def _handle_stream_finished(self):
         active_project_id = self.chat_manager.get_current_project_id()
         logger.info(f"MW SLOT _handle_stream_finished for project '{active_project_id}'.")
+
+        is_mc_related = False
+        if self.chat_manager and self.chat_manager._modification_coordinator:
+            mc = self.chat_manager._modification_coordinator
+            if mc.is_active():
+                if hasattr(mc, '_current_phase') and \
+                   (mc._current_phase == ModPhase.GENERATING_CODE_CONCURRENTLY or \
+                    mc._current_phase == ModPhase.AWAITING_PLAN_AND_ALL_CODER_INSTRUCTIONS): # CORRECTED
+                    is_mc_related = True
+
+        if is_mc_related:
+            logger.debug(f"Stream finished for MC. Not finalizing main chat UI.")
+            return
+
         if not (self.chat_tab_manager and active_project_id): return
         target_tab = self.chat_tab_manager.get_chat_tab_instance(active_project_id)
         if target_tab:
@@ -376,19 +428,15 @@ class MainWindow(QWidget):
     def update_status_based_on_state(self):
         if self.chat_manager: self.chat_manager.update_status_based_on_state()
 
-    # MODIFIED: This slot now reacts to backend_config_state_changed from ChatManager
-    @pyqtSlot(str, str, bool, bool)  # backend_id, model_name, is_configured, personality_is_active
+    @pyqtSlot(str, str, bool, bool)
     def _handle_config_state(self, backend_id: str, model_name: str, is_configured: bool, personality_is_active: bool):
         logger.debug(
             f"MW Slot: Handling config state. Backend: {backend_id}, Model: {model_name}, ConfigOK: {is_configured}, PersActive: {personality_is_active}")
-        # MainWindow's direct interest is mainly if the *active chat backend* changes, for window title.
-        # LeftPanel now handles its own UI updates based on these signals too.
         if backend_id == self.chat_manager.get_current_active_chat_backend_id():
             if self.left_panel:
-                # This updates the tooltip for the "Configure AI Persona" button in LeftPanel
                 self.left_panel.update_personality_tooltip(active=personality_is_active)
-            self.update_window_title()  # Update window title if active backend's model/config changes
-        self._update_rag_button_state()  # RAG button state might depend on general API readiness
+            self.update_window_title()
+        self._update_rag_button_state()
 
     @pyqtSlot(str, bool)
     def _handle_error(self, error_message: str, is_critical: bool):
@@ -410,25 +458,6 @@ class MainWindow(QWidget):
             logger.exception(f"Error handling code file update for {filename}: {e}"); self.update_status(
                 f"Error showing code update: {e}", "#e06c75", True, 5000)
 
-    # This slot might no longer be needed if LeftPanel handles model list updates internally
-    # based on chat_manager.available_models_changed_for_backend.
-    # If MainWindow needs to react to the general model list of the *active* backend,
-    # it would need to connect to a different signal or get info from ChatManager.
-    # For now, assuming LeftPanel is self-sufficient for its model dropdowns.
-    # @pyqtSlot(list)
-    # def _handle_available_models_changed(self, models: List[str]):
-    #     logger.info(f"MW Slot: _handle_available_models_changed ({len(models)} models). (This might be deprecated)")
-    #     # If MainWindow needs to update something based on the model list of the *active* backend:
-    #     # if self.left_panel and self.chat_manager:
-    #     #     try:
-    #     #         active_backend_id = self.chat_manager.get_current_active_chat_backend_id()
-    #     #         # This logic assumes models are for the active backend.
-    #     #         # If the signal is backend-specific, this needs adjustment.
-    #     #         current_model = self.chat_manager.get_model_for_backend(active_backend_id)
-    #     #         self.left_panel.update_model_list(models, current_model) # This old method is gone from LCP
-    #     #     except Exception: logger.exception("Error updating model list in LeftPanel:")
-    #     pass # Placeholder - LeftPanel now handles its model lists more directly
-
     @pyqtSlot(float)
     def _handle_temperature_changed(self, temperature: float):
         logger.info(f"MainWindow: Temperature changed via UI to {temperature:.2f}, passing to ChatManager.")
@@ -437,7 +466,6 @@ class MainWindow(QWidget):
     @pyqtSlot(str, int, int, int)
     def _handle_token_usage_update(self, backend_id: str, prompt_tokens: int, completion_tokens: int,
                                    model_max_context: int):
-        # Only update token display if the tokens are from the currently active chat backend
         if backend_id != self.chat_manager.get_current_active_chat_backend_id():
             logger.debug(f"Token update for non-active backend '{backend_id}', ignoring for status bar.")
             return
@@ -477,11 +505,9 @@ class MainWindow(QWidget):
         try:
             base_title = constants.APP_NAME;
             details = []
-            # Get model for the *active chat backend*
             active_chat_backend_id = self.chat_manager.get_current_active_chat_backend_id()
             model_name = self.chat_manager.get_model_for_backend(active_chat_backend_id)
-            pers_active = bool(
-                self.chat_manager.get_current_chat_personality())  # This gets personality for active chat backend
+            pers_active = bool(self.chat_manager.get_current_chat_personality())
 
             pcm = self.chat_manager.get_project_context_manager()
             active_project_id_from_cm = pcm.get_active_project_id() if pcm else constants.GLOBAL_COLLECTION_ID
@@ -506,13 +532,11 @@ class MainWindow(QWidget):
         except Exception:
             logger.exception("Error updating window title:"); self.setWindowTitle(constants.APP_NAME)
 
-    # <<< MODIFICATION START: Add flag check to _scan_message_for_code_blocks >>>
     def _scan_message_for_code_blocks(self, message: ChatMessage):
         if message.metadata and message.metadata.get("code_block_processed_by_mc"):
             original_file = message.metadata.get("original_filename_for_viewer", "an already processed file")
             logger.debug(f"MW Code Scan: Skipping message ID {message.id} (role: {message.role}) - already processed by MC for '{original_file}'.")
             return
-    # <<< MODIFICATION END >>>
 
         if not (self.dialog_service and hasattr(self.dialog_service, '_code_viewer_window') and \
                 (viewer_instance := self.dialog_service._code_viewer_window)): return
@@ -652,15 +676,12 @@ class MainWindow(QWidget):
 
     def _show_personality_editor(self):
         if self.dialog_service and self.chat_manager and not self.chat_manager.is_overall_busy():
-            # Get personality for the *currently active chat backend*
             active_backend_id = self.chat_manager.get_current_active_chat_backend_id()
-            current_prompt = self.chat_manager.get_current_chat_personality()  # This already gets for active backend
+            current_prompt = self.chat_manager.get_current_chat_personality()
 
-            # Pass current prompt to dialog. DialogService's show_edit_personality might need to be aware of which backend it's for if different dialogs are needed, but for now, one dialog is fine.
-            new_prompt = self.dialog_service.show_edit_personality()  # This method currently doesn't know about backends
+            new_prompt = self.dialog_service.show_edit_personality()
 
             if new_prompt is not None:
-                # Set personality for the *currently active chat backend*
                 self.chat_manager.set_personality_for_backend(active_backend_id, new_prompt)
 
     def _show_code_viewer(self, ensure_creation: bool = True):

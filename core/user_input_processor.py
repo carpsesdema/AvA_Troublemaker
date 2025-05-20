@@ -1,31 +1,24 @@
-# core/user_input_processor.py
 import logging
 import os
 from typing import List, Optional, Dict, Any, Tuple, Set, Union, NamedTuple, TYPE_CHECKING
 
-# --- Corrected Imports for core components ---
-from core.models import ChatMessage, USER_ROLE  # Keep USER_ROLE if needed for other actions
+from core.models import ChatMessage, USER_ROLE
 
-# Forward references for type hinting to avoid circular dependencies if RagHandler/ModHandler import UIP
 if TYPE_CHECKING:
     from core.rag_handler import RagHandler
     from core.modification_handler import ModificationHandler
-# --- End Corrected Imports ---
 
-from utils import constants  # Assuming constants is in utils at the project root
+from utils import constants
 
 logger = logging.getLogger(__name__)
 
 
 class ProcessResult(NamedTuple):
     action_type: str
-    prompt_or_history: Union[str, List[ChatMessage], str]  # Payload: augmented msg, command string, or project_id
+    prompt_or_history: Union[str, List[ChatMessage], str]
     original_query: Optional[str] = None
     original_context: Optional[str] = None
     original_focus_prefix: Optional[str] = None
-    # Added for UserInputHandler to get the original message ID if UIP creates one
-    # (though for summary, UIP doesn't create a ChatMessage for the user's command)
-    # original_query_message_id: Optional[str] = None
 
 
 class UserInputProcessor:
@@ -61,10 +54,9 @@ class UserInputProcessor:
                 rag_available: bool,
                 rag_initialized: bool) -> ProcessResult:
         logger.debug(
-            f"UserInputProcessor processing. Mod Active: {is_modification_active}, Query: '{user_query_text[:50]}...'")
+            f"UserInputProcessor processing. Mod Active: {is_modification_active}, Query: '{user_query_text[:50]}...', Focus Paths: {focus_paths}")
         query_lower = user_query_text.lower().strip()
 
-        # Path 0: Check for Project Summary Request
         if any(keyword in query_lower for keyword in self._PROJECT_SUMMARY_KEYWORDS):
             is_direct_summary_command = False
             for kw in self._PROJECT_SUMMARY_KEYWORDS:
@@ -84,7 +76,6 @@ class UserInputProcessor:
                     original_query=user_query_text
                 )
 
-        # Path 1: A modification sequence is ALREADY active
         if is_modification_active and self._modification_handler:
             logger.debug("Processing input during active modification sequence.")
             is_next_command = user_query_text.lower() in self._NEXT_COMMANDS
@@ -94,12 +85,10 @@ class UserInputProcessor:
             else:
                 return ProcessResult(action_type="REFINE_MODIFICATION",
                                      prompt_or_history=user_query_text)
-
-        # Path 2: No modification sequence is active; determine if this input should START one
         else:
             logger.debug("Processing input for normal chat or potential modification start.")
             is_potential_modification_request = False
-            if self._modification_handler:  # Check if mod handler is available
+            if self._modification_handler:
                 if any(kw in query_lower for kw in self._STRONG_MODIFICATION_KEYWORDS):
                     is_potential_modification_request = True
                 else:
@@ -111,37 +100,35 @@ class UserInputProcessor:
                         is_potential_modification_request = True
 
                 if is_potential_modification_request:
-                    # Avoid downgrading too easily if strong intent or rich context
                     is_short_and_ambiguous = len(user_query_text.split()) < 5 and \
                                              not any(kw in query_lower for kw in self._STRONG_MODIFICATION_KEYWORDS) and \
                                              not focus_paths
                     if is_short_and_ambiguous:
-                        pass
                         logger.info(
                             f"Query '{user_query_text[:30]}' is short & lacks strong cues for mod, but proceeding with mod check.")
 
             if is_potential_modification_request and self._modification_handler:
                 logger.info("Potential modification request identified. Preparing for START_MODIFICATION.")
-                rag_context_str_for_mod, focus_prefix_for_mod = self._get_rag_and_focus(
+                rag_context_str_for_mod, determined_focus_prefix = self._get_rag_and_focus(
                     query=user_query_text, is_modification=True,
                     current_project_id=current_project_id, focus_paths=focus_paths,
                     rag_available=rag_available, rag_initialized=rag_initialized
                 )
+                logger.info(f"UIP: For START_MODIFICATION, determined_focus_prefix: '{determined_focus_prefix}'")
                 return ProcessResult(
                     action_type="START_MODIFICATION", prompt_or_history=[],
                     original_query=user_query_text, original_context=rag_context_str_for_mod,
-                    original_focus_prefix=focus_prefix_for_mod
+                    original_focus_prefix=determined_focus_prefix
                 )
-            # Otherwise, it's a normal chat message
             else:
                 logger.info("Processing as normal chat message.")
-                rag_context_str_for_chat, focus_prefix_for_chat = self._get_rag_and_focus(
+                rag_context_str_for_chat, determined_focus_prefix_chat = self._get_rag_and_focus(
                     query=user_query_text, is_modification=False,
                     current_project_id=current_project_id, focus_paths=focus_paths,
                     rag_available=rag_available, rag_initialized=rag_initialized
                 )
                 final_text_for_llm = self._prepare_normal_chat_prompt(user_query_text, rag_context_str_for_chat,
-                                                                      focus_prefix_for_chat)
+                                                                      determined_focus_prefix_chat)
                 final_parts = [final_text_for_llm] + (image_data or [])
                 message_for_backend = ChatMessage(role=USER_ROLE, parts=final_parts)
                 return ProcessResult(action_type="NORMAL_CHAT", prompt_or_history=[message_for_backend])
@@ -150,10 +137,32 @@ class UserInputProcessor:
                            focus_paths: Optional[List[str]], rag_available: bool, rag_initialized: bool) -> Tuple[
         str, str]:
         rag_context_str = ""
-        focus_prefix = ""
+        determined_focus_prefix = ""
         if not self._rag_handler:
-            logger.warning("RagHandler not available, cannot perform RAG or generate focus prefix.")
-            return rag_context_str, focus_prefix
+            logger.warning("UIP: RagHandler not available, cannot perform RAG or determine focus prefix from paths.")
+            if focus_paths:  # If RAG handler is missing but focus_paths were given, try to derive a prefix anyway
+                logger.info("UIP: RagHandler missing, but attempting to derive focus_prefix from focus_paths.")
+                # Simplified derivation, same as below
+                if len(focus_paths) == 1 and os.path.isfile(focus_paths[0]):
+                    determined_focus_prefix = os.path.dirname(os.path.abspath(focus_paths[0]))
+                elif len(focus_paths) > 0:
+                    try:
+                        abs_paths = [os.path.abspath(p) for p in focus_paths]
+                        common = os.path.commonpath(abs_paths)
+                        if os.path.isdir(common):
+                            determined_focus_prefix = common
+                        elif os.path.isfile(common):
+                            determined_focus_prefix = os.path.dirname(common)
+                        else:  # Fallback logic
+                            first_path_dir = os.path.dirname(abs_paths[0])
+                            if os.path.isdir(first_path_dir): determined_focus_prefix = first_path_dir
+                    except ValueError:  # Handles different drives on Windows for commonpath
+                        first_path_dir = os.path.dirname(os.path.abspath(focus_paths[0]))
+                        if os.path.isdir(first_path_dir): determined_focus_prefix = first_path_dir
+
+                if determined_focus_prefix: logger.info(
+                    f"UIP: (No RAG) Determined focus_prefix: '{determined_focus_prefix}'")
+            return rag_context_str, determined_focus_prefix
 
         should_rag = False
         if is_modification:
@@ -172,22 +181,69 @@ class UserInputProcessor:
 
         if focus_paths:
             num_focused = len(focus_paths)
-            focus_prefix = "[Focus on:\n"
-            focus_prefix += "\n".join([f"- `{os.path.basename(p)}`" for p in focus_paths])
-            focus_prefix += "\n]\n\n"
-            logger.debug(f"Generated focus prefix for {num_focused} paths.")
-        return rag_context_str, focus_prefix
 
-    def _prepare_normal_chat_prompt(self, user_query: str, rag_context: str, focus_prefix: str) -> str:
-        if rag_context or focus_prefix:
+            if num_focused == 1 and os.path.isfile(focus_paths[0]):
+                determined_focus_prefix = os.path.dirname(os.path.abspath(focus_paths[0]))
+            elif num_focused > 0:
+                abs_paths = [os.path.abspath(p) for p in focus_paths]
+                try:
+                    common = os.path.commonpath(abs_paths)
+                    if os.path.isdir(common):
+                        determined_focus_prefix = common
+                    elif os.path.isfile(common):  # If common path is a file, take its directory
+                        determined_focus_prefix = os.path.dirname(common)
+                    else:
+                        first_path_dir = os.path.dirname(abs_paths[0])
+                        if os.path.isdir(first_path_dir):
+                            determined_focus_prefix = first_path_dir
+                        else:
+                            determined_focus_prefix = os.getcwd()
+                            logger.warning(
+                                f"UIP: Could not determine a valid common directory for focus_paths: {focus_paths}. Defaulting focus_prefix to CWD: {determined_focus_prefix}")
+                except ValueError:
+                    first_path_dir = os.path.dirname(abs_paths[0])
+                    if os.path.isdir(first_path_dir):
+                        determined_focus_prefix = first_path_dir
+                        logger.warning(
+                            f"UIP: ValueError finding commonpath for {focus_paths} (likely different drives). Using dir of first path: {determined_focus_prefix}")
+                    else:
+                        determined_focus_prefix = os.getcwd()
+                        logger.warning(
+                            f"UIP: Could not determine common directory for {focus_paths} (multi-drive, first not dir). Defaulting focus_prefix to CWD: {determined_focus_prefix}")
+
+            if determined_focus_prefix:
+                logger.info(
+                    f"UIP: Determined focus_prefix: '{determined_focus_prefix}' from {num_focused} focus_paths.")
+            else:  # If focus_paths was empty or no valid prefix could be determined
+                logger.warning(
+                    f"UIP: Could not determine a focus_prefix from focus_paths: {focus_paths}. Will be empty.")
+
+        return rag_context_str, determined_focus_prefix
+
+    def _prepare_normal_chat_prompt(self, user_query: str, rag_context: str, focus_prefix_from_paths: str) -> str:
+
+        focus_display_prefix = ""
+        if focus_prefix_from_paths:
+            try:
+                # Attempt to get a display-friendly name for the focus prefix
+                # For example, the last component of the path
+                base_name = os.path.basename(focus_prefix_from_paths)
+                if not base_name and len(focus_prefix_from_paths) > 1:  # e.g. "C:/" might result in empty basename
+                    base_name = focus_prefix_from_paths  # Use the full path if basename is empty (like a drive letter)
+                focus_display_prefix = f"[Focusing on files within or related to directory: `{base_name or focus_prefix_from_paths}`]\n\n"
+            except Exception:
+                focus_display_prefix = f"[Focusing on files within or related to directory: `{focus_prefix_from_paths}`]\n\n"
+
+        if rag_context or focus_display_prefix:
             prompt_template = (
-                "{focus}"
+                "{focus_display}"
                 "User Query: {query}\n\n"
                 "{context_section}"
                 "Based on the above query and context (if provided), please respond."
             )
             context_section = f"Relevant Context:\n{rag_context}\n\n" if rag_context else ""
-            final_prompt = prompt_template.format(focus=focus_prefix, query=user_query, context_section=context_section)
+            final_prompt = prompt_template.format(focus_display=focus_display_prefix, query=user_query,
+                                                  context_section=context_section)
             return final_prompt
         else:
             return user_query
